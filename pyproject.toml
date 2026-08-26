@@ -1,0 +1,12 @@
+[project]
+name = "tiktok-techjam-2026-track-3"
+version = "0.1.0"
+description = "Transformer optimization benchmark for TikTok TechJam 2026 Track 3"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy",
+    "torch",
+]
+
+[tool.uv]
+package = false
