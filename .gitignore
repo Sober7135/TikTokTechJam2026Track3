@@ -5,8 +5,5 @@ __pycache__/
 *.py[cod]
 target/
 .cache/
-control-plane-state.json
-github-poller-state.json
-artifacts/
-analysis-workspaces/
+.benchmarkctl/
 *.result.json

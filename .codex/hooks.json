@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/orchestrator/target/release/benchmarkctl\" hook-stop",
+            "timeout": 15000,
+            "statusMessage": "Waiting for the queued GPU benchmark"
+          }
+        ]
+      }
+    ]
+  }
+}
