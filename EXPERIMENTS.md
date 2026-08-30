@@ -741,3 +741,49 @@
   unified cases-1/13 claim. Retain the exact fallbacks and require the
   supervisor's ordinary unified job after layering this commit. Do not submit
   a follow-up from this worktree.
+
+## Winner integration I05 - cases 4/12 exact GELU extension
+
+- Source under test: unsigned implementation commit
+  `eb1a1bcd804b59480d2ac75fa3e8a769a57df73a`, layered on I04 without the
+  rejected case-13 or retained case-6 scheduling experiments.
+- Unified ordinary job: `job-1788128838367-68f541c7b93cb504`, immutable
+  snapshot `739fea5b14f1dffa09bc861777dc5873dbb346612abd40eb00f56e8862d3d29e`.
+  It ran official CUDA BF16 cases 1-13 on the RTX 4070 with Python 3.12.14,
+  PyTorch 2.13.0+cu130, CUDA 13.0, five accuracy trials, 20 warmups, 100
+  repeats, and three alternating benchmark rounds.
+- Correctness is admissible and exact: all 65 trials passed bitwise, with
+  `0 / 938,885,120` failed output elements and zero maximum absolute and
+  relative error under the strict elementwise OR rule.
+- Same-job baseline/candidate medians in milliseconds and paired speedups were:
+  case 1 `1.421440 / 0.577536` (`2.461215x`); case 2
+  `0.953344 / 0.097280` (`9.800000x`); case 3
+  `0.953344 / 0.126976` (`7.508065x`); case 4
+  `0.958688 / 0.235520` (`4.070516x`); case 5
+  `3.224576 / 1.173504` (`2.747819x`); case 6
+  `414.053787 / 167.206093` (`2.476308x`); case 7
+  `1.100000 / 0.498688` (`2.205788x`); case 8
+  `11.689984 / 10.917888` (`1.070718x`); case 9
+  `0.870400 / 0.505856` (`1.720648x`); case 10
+  `1.110016 / 0.499712` (`2.221311x`); case 11
+  `7.277568 / 1.187840` (`6.126724x`); case 12
+  `0.950400 / 0.169984` (`5.591114x`); and case 13
+  `110.906364 / 35.576321` (`3.117421x`).
+- Speedup arithmetic uses only paired medians from this job. The equal-case
+  geometric mean is `3.267271794x`; the one-call-total speedup is
+  `555.469912 / 218.773197 = 2.539021778x`.
+- Cross-job comparison versus I04 uses candidate latency only. The intended
+  targets improved by `2.953584%` for case 4 and `3.488373%` for case 12.
+  Across all 13 cases, equal-case candidate-latency geometric mean improved
+  `0.558209%`, while total candidate latency improved `0.017925%`
+  (`218.812418 -> 218.773197 ms`). Small untargeted movements are retained as
+  run-to-run noise rather than attributed to unreachable dispatch code.
+- Aggregate MFU is `15.833083%`, derived as
+  `2,017,695,105,024 FLOPs / 0.218773197 s / 58.25e12`; this is `+0.002838`
+  percentage points versus I04. MFU is supervisor-derived rather than a
+  harness field.
+- Decision: `promote` I05. The entire cases-1/13 matrix is bitwise exact, both
+  intended targets materially improve, and aggregate candidate-geomean,
+  total-call latency, and MFU improve. The slightly lower paired speedup
+  geomean versus I04 is baseline drift and is not substituted for the
+  candidate-only cross-job comparison.
