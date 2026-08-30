@@ -28,7 +28,8 @@ def _triangular_scores_kernel(
     seq_len: tl.constexpr,
     head_dim: tl.constexpr,
     block_head_dim: tl.constexpr,
-    block_size: tl.constexpr,
+    block_query_size: tl.constexpr,
+    block_key_size: tl.constexpr,
     skip_fully_future: tl.constexpr,
     output_float32: tl.constexpr,
 ):
@@ -37,9 +38,11 @@ def _triangular_scores_kernel(
     head_index = block_bh % heads
     query_block = tl.program_id(1)
     key_block = tl.program_id(2)
-    output_query_rows = query_block * block_size + tl.arange(0, block_size)
+    output_query_rows = query_block * block_query_size + tl.arange(
+        0, block_query_size
+    )
     query_rows = query_row_start + output_query_rows
-    key_rows = key_block * block_size + tl.arange(0, block_size)
+    key_rows = key_block * block_key_size + tl.arange(0, block_key_size)
     score_offsets = (
         block_bh * scores_stride_bh
         + output_query_rows[:, None] * scores_stride_row
@@ -50,12 +53,12 @@ def _triangular_scores_kernel(
     )
 
     tile_is_fully_future = skip_fully_future & (
-        key_block * block_size
-        >= query_row_start + (query_block + 1) * block_size
+        key_block * block_key_size
+        >= query_row_start + (query_block + 1) * block_query_size
     )
     if tile_is_fully_future:
         future_scores = tl.full(
-            (block_size, block_size), -float("inf"), tl.float32
+            (block_query_size, block_key_size), -float("inf"), tl.float32
         )
         if not output_float32:
             future_scores = future_scores.to(tl.bfloat16)
@@ -154,7 +157,8 @@ def triangular_causal_scores(
         seq_len=seq_len,
         head_dim=head_dim,
         block_head_dim=block_head_dim,
-        block_size=block_size,
+        block_query_size=block_size,
+        block_key_size=block_size,
         skip_fully_future=(batch, heads, seq_len, head_dim)
         == (64, 1, 128, 128),
         output_float32=output_float32,
@@ -185,12 +189,12 @@ def triangular_causal_score_chunk(
         raise ValueError("row range must be within the sequence")
     row_count = row_stop - row_start
     if seq_len == 1024:
-        block_size = 128
+        block_query_size = 128
         if head_dim != 32:
             raise ValueError("seq_len=1024 score chunks require head_dim=32")
     elif seq_len == 128:
-        block_size = row_count
-        if block_size not in (16, 32, 64):
+        block_query_size = row_count
+        if block_query_size not in (16, 32, 64):
             raise ValueError("seq_len=128 score chunk rows must be 16, 32, or 64")
         if head_dim not in (8, 32, 64):
             raise ValueError(
@@ -198,8 +202,15 @@ def triangular_causal_score_chunk(
             )
     else:
         raise ValueError("score chunks currently require seq_len=128 or 1024")
-    if row_start % block_size or row_stop % block_size:
+    if row_start % block_query_size or row_stop % block_query_size:
         raise ValueError("score chunk row boundaries must be tile-aligned")
+
+    # Every S=128 prefix keeps its existing native-softmax shape, but one
+    # score program now covers the complete key prefix.  QK reduces only over
+    # head_dim, so widening the independent output-column tile does not split,
+    # pad, or reassociate that reduction.  It avoids reloading each query tile
+    # once per 16/32/64-key output block across cases 1/5/6/7/10/11.
+    block_key_size = 128 if seq_len == 128 else block_query_size
 
     scores = torch.empty(
         (batch, heads, row_count, row_stop),
@@ -208,8 +219,8 @@ def triangular_causal_score_chunk(
     )
     grid = (
         batch * heads,
-        triton.cdiv(row_count, block_size),
-        triton.cdiv(row_stop, block_size),
+        triton.cdiv(row_count, block_query_size),
+        triton.cdiv(row_stop, block_key_size),
     )
     _triangular_scores_kernel[grid](
         query,
@@ -231,10 +242,11 @@ def triangular_causal_score_chunk(
         seq_len=seq_len,
         head_dim=head_dim,
         block_head_dim=max(16, head_dim),
-        block_size=block_size,
+        block_query_size=block_query_size,
+        block_key_size=block_key_size,
         skip_fully_future=seq_len == 1024,
         output_float32=output_float32,
-        num_warps=4 if block_size <= 32 else 8,
+        num_warps=4 if block_query_size <= 32 else 8,
         num_stages=2,
     )
     return scores

@@ -787,3 +787,53 @@
   total-call latency, and MFU improve. The slightly lower paired speedup
   geomean versus I04 is baseline drift and is not substituted for the
   candidate-only cross-job comparison.
+
+## Cross-case exact attention E01 - consolidate S=128 QK key tiles
+
+- Status: pre-GPU candidate; no correctness or performance conclusion yet.
+- Historical best: clean I05 implementation/docs head
+  `5079e32ee15af761b17f0b9472616fa72425f65b`, unified ordinary job
+  `job-1788128838367-68f541c7b93cb504`, snapshot
+  `739fea5b14f1dffa09bc861777dc5873dbb346612abd40eb00f56e8862d3d29e`.
+- Exact targets: official CUDA BF16 cases 1/5/6/7/10/11. All six use the
+  candidate's compact S=128 causal-prefix attention with native FP32 softmax
+  and query chunks of 32, 32, 64, 64, 64, and 16 rows respectively.
+- Bottleneck hypothesis: the existing triangular QK kernel ties the query-row
+  and output-key tile widths together. As a prefix grows, each query tile is
+  therefore reloaded once per 16/32/64-key block. Giving S=128 score chunks an
+  independent 128-column key tile reduces score programs per batch/head from
+  `1+2+3+4` to `4` for cases 1/5, `1+2` to `2` for cases 6/7/10, and
+  `1+...+8` to `8` for case 11: about 60%, 33%, and 78% fewer programs. The
+  expected gain comes from fewer Q reloads and less program scheduling; kernel
+  launch count, softmax, and PV work are deliberately unchanged.
+- Numerical-equivalence boundary: each score scalar still performs one BF16
+  `Q @ K^T` dot over the complete, unchanged `head_dim` reduction, rounds that
+  dot to BF16, applies the same scale and BF16 rounding, and stores through the
+  same causal predicate. Only the independent output-column extent changes;
+  there is no split-K, padding on the dot reduction axis, or reassociation of
+  partial sums. Each prefix retains its exact compact tensor shape before the
+  unchanged native ATen FP32 softmax, so neither softmax shape nor reduction
+  changes. PV, output projection, residuals, LayerNorm, and FFN are untouched.
+  Triton lowering for the wider N tile remains an empirical strict-correctness
+  risk even though the algebraic reduction axis is unchanged.
+- Dispatch/fallback: only the already-dispatched eval, inference/no-grad,
+  causal, no-effective-mask, CUDA BF16 S=128 score chunks reach the 128-key
+  tile. S=1024 case 13 retains its existing 128-by-128 score tile; full-score
+  cases, masks, CPU, other dtypes/shapes/modes, baseline code, public forward
+  contract, weights, case 14, and every existing fallback remain unchanged.
+- Historical I05 candidate medians for targets 1/5/6/7/10/11 are
+  `0.577536 / 1.173504 / 167.206093 / 0.498688 / 0.499712 / 1.187840 ms`;
+  their equal-case geometric mean is `1.795851394 ms`.
+- Preregistered gate: all six cases and all five trials must pass strict
+  `abs_error < 0.002 OR abs_error < 0.02 * abs(reference)` correctness before
+  latency is interpreted. Promote only if target candidate-latency geometric
+  mean is at most `1.777892880 ms` (at least 1% better than I05), no target
+  exceeds its I05 candidate median by more than 3%, and round medians do not
+  expose an unstable apparent gain. Otherwise retain I05; any correctness,
+  compile, or execution failure rejects E01. One focused multi-case job is
+  planned, with at most one follow-up only for a newly evidenced concrete bug.
+- Pre-GPU validation: `git diff --check`; Python compilation of the facade,
+  package modules, and tests; 20/20 standard-library unit tests including the
+  independent key-tile dispatch predicate; and the prescribed CPU BF16 smoke
+  all passed. The smoke was bitwise exact (`0 / 128` failed elements) and used
+  the unchanged CPU fallback. Its latency is not GPU evidence.

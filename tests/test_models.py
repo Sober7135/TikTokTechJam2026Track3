@@ -189,6 +189,24 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("(32, 32, 32)", wrapper_source)
         self.assertIn("num_warps=8 if row_count == 128 else 4", wrapper_source)
 
+    def test_s128_score_chunks_consolidate_complete_key_prefix(self) -> None:
+        from transformer_benchmark.triangular_scores import (
+            triangular_causal_score_chunk,
+        )
+
+        source = inspect.getsource(triangular_causal_score_chunk)
+        self.assertIn(
+            "block_key_size = 128 if seq_len == 128 else block_query_size",
+            source,
+        )
+        self.assertIn("triton.cdiv(row_stop, block_key_size)", source)
+        self.assertIn("block_query_size=block_query_size", source)
+        self.assertIn("block_key_size=block_key_size", source)
+        self.assertIn(
+            "num_warps=4 if block_query_size <= 32 else 8",
+            source,
+        )
+
     def test_cases4_and12_extend_exact_gelu_fusion_by_exact_shape(self) -> None:
         block_source = inspect.getsource(UserOptimizedTransformerBlock.forward)
         fused_gate = block_source.split("use_fused_ffn_in =", 1)[1].split(
