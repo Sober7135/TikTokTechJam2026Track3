@@ -518,3 +518,89 @@
 - Decision: `promote` E01 for integration. This is focused case-11 evidence,
   not a unified cases-1-13 claim; shared-winner source remains unchanged until
   the supervisor layers the commit and validates the combined matrix.
+
+## Cases-4/12 full HD32 PV E01 - explicit boundary and final-layout store
+
+- Status: `promote` from focused evidence; ready for shared-winner integration
+  and a later unified cases-1/13 validation.
+- Parent: verified I03 implementation commit
+  `f157bcd0d1ba470664d1742f94eb5fb62bfc4fe6`; comparable unified job
+  `job-1788124928473-8295c78ca0925273`, snapshot
+  `63cd5873b3bf87a0e1cfd66a5e34c6e43a8bd384e54c3db0806bf88743263557`.
+  I03 candidate medians for cases 4/12 are `0.2641919851 / 0.2017280012 ms`.
+  All three 100-sample candidate round medians equal those aggregate medians
+  for both cases.
+- Exact targets: official CUDA BF16 cases 4 and 12,
+  `(B,S,D,H,HD)=(16,128,128,4,32)` and `(64,32,128,4,32)`. Their unchanged
+  full-attention path materializes triangular scores, invokes native FP32
+  softmax, rounds its output into a separate BF16 probability tensor, invokes
+  native BF16 PV against a projection-backed strided V view, then copies BHSD
+  context into sequence-major layout. The hypothesis is that one custom PV
+  launch per layer can fuse only the explicit probability rounding boundary
+  and write the BF16 context directly into final layout.
+- Implementation: reuse the already verified cases-6/10 stride-aware Triton
+  kernel for the exact full `(M,K,N)` tiles `(128,128,32)` and `(32,32,32)`.
+  It loads native-softmax FP32 probabilities, explicitly rounds them to BF16,
+  multiplies by BF16 V with `tl.dot(..., out_dtype=tl.float32)`, rounds the
+  accumulator to BF16, and stores through a BHSD view of contiguous
+  `[B,S,H,HD]` backing. The existing transpose then exposes that backing as a
+  contiguous `[B,S,D]` tensor without a layout materialization.
+- Numerical boundary: QKV projection, triangular BF16 QK dot, BF16 scaling and
+  causal mask, complete native FP32 softmax reduction, full K=128 or K=32 PV
+  reduction, and BF16 context materialization remain in the same order. There
+  is no online/fused softmax, split-K, K padding, or reduction reassociation
+  outside the existing Triton-versus-native tensor-core implementation choice.
+  The official strict elementwise test remains authoritative because its
+  reduction tree need not be bitwise identical to cuBLAS.
+- Resource audit: case 4 launches one 128x128x32 tile per batch/head with eight
+  warps and two stages. The 128x32 FP32 accumulator distributes to 16 values
+  per thread across 256 threads; BF16 A/B staging is about 40 KiB per stage,
+  or about 80 KiB at two stages, below the Ada per-block shared-memory limit.
+  Case 12 retains four warps and two stages for its 32x32x32 tile. Both use one
+  program per batch/head and keep the entire K axis in one program.
+- Dispatch/fallback: only exact query shapes `(16,4,128,32)` and
+  `(64,4,32,32)` after the existing eval/inference/no-grad CUDA BF16 causal
+  no-mask full-attention dispatch reach the new path. All other cases, custom
+  shapes, dtypes, devices, modes and masks retain I03 native PV fallback;
+  cases 6/10 keep their promoted prefix kernel unchanged. Baseline source,
+  weights, public interface/output, QK/softmax/LayerNorm behavior, CUDA Graph
+  eligibility, and independent replay output cloning are unchanged.
+- Local validation: `git diff --check`; full facade/package/test Python
+  compilation; 16/16 unit tests including exact dispatch, tile and final-layout
+  predicates; and the prescribed CPU BF16 smoke passed. The CPU smoke was
+  bitwise exact (`0 / 128` failed elements). These are not GPU performance
+  evidence.
+- Preregistered gate: both requested cases must pass strict
+  `abs<0.002 OR rel<0.02` correctness before latency is interpreted. Promote
+  only if candidate-latency equal-case geometric mean improves at least 1%
+  versus I03 and neither case regresses more than 0.5%. Otherwise retain I03;
+  a compile/execution failure or incorrect output rejects E01. No follow-up GPU
+  job is permitted from this experiment.
+- Focused ordinary job: `job-1788127317209-26f7cc043362c708`, immutable
+  snapshot `909b7e609bc5be9e1ee04099e4df2078fc7d53f60cc78b9eb149b4c3ce51c301`
+  from pre-result commit `3fda366666933e76e0a7d9eae9263469ef776ce8`.
+  The job used the pinned root Python/package identity, RTX 4070,
+  PyTorch 2.13.0+cu130/CUDA 13.0, BF16, five accuracy trials, 20 warmups,
+  100 repeats, and three rounds; it exited zero in state `succeeded` after
+  executing both and only requested cases 4/12.
+- Correctness: both cases passed all five trials bitwise exact. Aggregate
+  failures were `0 / 2,621,440` elements, with maximum absolute and relative
+  error both zero. Performance is therefore admissible under the strict rule.
+- Same-job baseline/candidate medians and speedups: case 4
+  `0.9656320214 / 0.2426880002 ms` (`3.978903039x`); case 12
+  `0.9625599980 / 0.1751040071 ms` (`5.497075788x`). Each timing side has 300
+  samples. Candidate round medians were
+  `0.2426880002 / 0.2426880002 / 0.2426880002 ms` for case 4 and
+  `0.1751040071 / 0.1751040071 / 0.1751040071 ms` for case 12. Baseline round
+  medians were `0.9636480212 / 0.9666560292 / 0.9666560292 ms` and
+  `0.9605920017 / 0.9640319943 / 0.9635840058 ms`, respectively.
+- I03 comparison: candidate latency fell `8.139529637%` for case 4 and
+  `13.197966543%` for case 12; equal-case geometric-mean latency fell
+  `10.704559905%` (`0.2308569278 -> 0.2061447097 ms`). Same-job baseline drift
+  versus I03 was only `+0.319151367% / +0.442441590%`, while neither candidate
+  regressed. The preregistered `>=1%` geomean and `<=0.5%` per-case regression
+  gates pass decisively.
+- Decision: `promote`. The exact full-HD32 PV/final-layout specialization is a
+  verified improvement for cases 4/12. No follow-up job was submitted and this
+  branch does not modify the shared winner; integration still requires a
+  separate commit plus unified correctness/performance evidence.

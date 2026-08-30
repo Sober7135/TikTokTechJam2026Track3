@@ -106,15 +106,16 @@ def bf16_probability_value(
         (64, 128, 32),
         (64, 64, 64),
         (64, 128, 64),
+        (128, 128, 32),
     }:
-        raise ValueError("PV kernel is specialized to declared prefix chunks")
+        raise ValueError("PV kernel is specialized to declared PV tiles")
     allowed_row_starts = (0, 32, 64, 96) if row_count == 32 else (0, 64)
     if (
         row_start not in allowed_row_starts
         or key_count != row_start + row_count
         or row_start + row_count > context.shape[-2]
     ):
-        raise ValueError("row/key range is outside the declared prefix context")
+        raise ValueError("row/key range is outside the declared PV context")
     if not probabilities.is_contiguous():
         raise ValueError("PV kernel requires contiguous probabilities")
     if value.stride(-1) != 1:
@@ -141,7 +142,10 @@ def bf16_probability_value(
         key_count=key_count,
         block_key_count=triton.next_power_of_2(key_count),
         head_dim=value.shape[-1],
-        num_warps=4,
+        # The full case-4 tile has a 128x32 FP32 accumulator. Eight warps keep
+        # its accumulator distribution comparable to the proven 64x32 tile;
+        # the 32/64-row variants retain the prior four-warp launch.
+        num_warps=8 if row_count == 128 else 4,
         num_stages=2,
     )
 

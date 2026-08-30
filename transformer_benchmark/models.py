@@ -529,8 +529,27 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                 )
             context = torch.cat(context_chunks, dim=-2)
         else:
-            probs = torch.softmax(scores.float(), dim=-1).to(dtype=x.dtype)
-            context = torch.matmul(probs, v)
+            probs_float32 = torch.softmax(scores.float(), dim=-1)
+            use_full_hd32_pv_kernel = tuple(q.shape) in {
+                (16, 4, 128, 32),
+                (64, 4, 32, 32),
+            }
+            if use_full_hd32_pv_kernel:
+                from .pv_context import bf16_probability_value
+
+                # Expose a BHSD view whose backing is already contiguous BSHD.
+                # The stride-aware kernel therefore preserves the existing
+                # BF16 context boundary without the following transpose copy.
+                context_sequence_major = torch.empty(
+                    (batch, seq_len, self.num_heads, self.head_dim),
+                    device=x.device,
+                    dtype=x.dtype,
+                )
+                context = context_sequence_major.permute(0, 2, 1, 3)
+                bf16_probability_value(probs_float32, v, context, 0)
+            else:
+                probs = probs_float32.to(dtype=x.dtype)
+                context = torch.matmul(probs, v)
         context = (
             context.transpose(1, 2)
             .contiguous()

@@ -165,6 +165,41 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         ].split("context = self._chunked_triangular_context", 1)[0]
         self.assertIn("(64, 128, 128, 16)", direct_write_block)
 
+    def test_cases4_and12_dispatch_full_hd32_pv_to_final_layout(self) -> None:
+        attention = UserOptimizedTransformer(
+            TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        ).layers[0].attention
+        forward_source = inspect.getsource(attention.forward)
+        full_pv_block = forward_source.split(
+            "use_full_hd32_pv_kernel =", 1
+        )[1].split("else:", 1)[0]
+
+        self.assertIn("(16, 4, 128, 32)", full_pv_block)
+        self.assertIn("(64, 4, 32, 32)", full_pv_block)
+        self.assertIn("context_sequence_major.permute(0, 2, 1, 3)", forward_source)
+        self.assertIn(
+            "bf16_probability_value(probs_float32, v, context, 0)",
+            forward_source,
+        )
+
+        from transformer_benchmark.pv_context import bf16_probability_value
+
+        wrapper_source = inspect.getsource(bf16_probability_value)
+        self.assertIn("(128, 128, 32)", wrapper_source)
+        self.assertIn("(32, 32, 32)", wrapper_source)
+        self.assertIn("num_warps=8 if row_count == 128 else 4", wrapper_source)
+
+    def test_full_hd32_pv_sequence_major_layout_is_transpose_contiguous(self) -> None:
+        for batch, seq_len in ((16, 128), (64, 32)):
+            backing = torch.empty(batch, seq_len, 4, 32)
+            context = backing.permute(0, 2, 1, 3)
+            self.assertFalse(context.is_contiguous())
+            self.assertTrue(context.transpose(1, 2).is_contiguous())
+            self.assertEqual(
+                tuple(context.transpose(1, 2).view(batch, seq_len, 128).shape),
+                (batch, seq_len, 128),
+            )
+
     def test_mask_classification_tracks_mutation_and_inference_tensors(self) -> None:
         config = TransformerConfig(1, 128, 128, 4, 128, 4, True)
         optimized = UserOptimizedTransformer(config).eval()
