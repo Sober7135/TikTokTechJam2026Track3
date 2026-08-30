@@ -158,9 +158,45 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
         )
 
     def _project_qkv(
-        self, x: torch.Tensor
+        self,
+        x: torch.Tensor,
+        direct_layout: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch, seq_len, _ = x.shape
+        use_direct_layout = (
+            direct_layout
+            and not self.training
+            and torch.is_inference_mode_enabled()
+            and not torch.is_grad_enabled()
+            and x.device.type == "cuda"
+            and x.dtype == torch.bfloat16
+            and x.is_contiguous()
+            and (batch, seq_len, self.d_model, self.num_heads)
+            in {
+                (16, 128, 128, 4),
+                (64, 32, 128, 4),
+                (64, 128, 32, 4),
+                (64, 128, 128, 1),
+                (64, 128, 128, 2),
+                (64, 128, 128, 4),
+                (64, 128, 128, 16),
+                (64, 1024, 128, 4),
+                (128, 128, 128, 4),
+            }
+            and self.qkv_proj.in_features == self.d_model
+            and self.qkv_proj.out_features == 3 * self.d_model
+            and self.qkv_proj.bias is not None
+        )
+        if use_direct_layout:
+            from .direct_qkv import bf16_qkv_direct_layout
+
+            return bf16_qkv_direct_layout(
+                x,
+                self.qkv_proj.weight,
+                self.qkv_proj.bias,
+                self.num_heads,
+            )
+
         packed = self.qkv_proj(x)
         logical = packed.view(batch, seq_len, 3, self.num_heads, self.head_dim)
         q_view, k_view, v_view = logical.unbind(dim=2)
@@ -338,7 +374,10 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
     ) -> torch.Tensor:
         batch, seq_len, _ = x.shape
 
-        q, k, v = self._project_qkv(x)
+        q, k, v = self._project_qkv(
+            x,
+            direct_layout=causal and valid_token_mask is None,
+        )
         use_chunked_triangular_attention = (
             not self.training
             and torch.is_inference_mode_enabled()

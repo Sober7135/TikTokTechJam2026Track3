@@ -988,3 +988,64 @@
   candidate improvements, all-case candidate geomean, total-call latency, and
   MFU all improve. Cases 2/3 remain at or above 7x; the wider 7x-10x objective
   remains incomplete for most cases and requires further independent rounds.
+
+## Cross-case direct-layout QKV E01 - write projection into contiguous BHSD
+
+- Status: pre-GPU candidate. Historical best is the clean I06 source/docs head
+  `39e9629de19180f63b847397afe0668a6a924207`; its unified ordinary job is
+  `job-1788131811786-b0caf8beace8d3d3`, immutable snapshot
+  `8592e0d4e5085a5afa83f71cb49852b3009333d15b029c17e6014201033036fd`.
+- Exact targets: official CUDA BF16 cases 1/4/5/7/9/10/11/12/13. Their I06
+  same-job speedups remain below 7x, while cases 2/3 already meet the requested
+  range. Cases 6/8 are deliberately excluded because their much larger row or
+  feature dimensions require different GEMM tiling; case 14 remains outside
+  this campaign as previously directed.
+- Bottleneck hypothesis: the current packed `nn.Linear` writes row-major
+  `[B,S,3D]` and exposes Q/K/V as `[B,H,S,HD]` views with sequence stride `3D`.
+  Cases 11/13 additionally materialize a contiguous V copy. A candidate-only
+  QKV kernel can preserve one packed projection launch while writing directly
+  to a single contiguous `[3,B,H,S,HD]` backing. This removes the packed
+  intermediate layout, makes all three attention operands contiguous, and
+  removes the cases-11/13 V copy. Expected benefit is lower QK/PV operand
+  traffic and layout overhead across all four layers, not fewer attention
+  reductions.
+- Numerical boundary: native `norm1` remains fully materialized and unchanged.
+  The kernel loads the same BF16 normalized activation and packed
+  `nn.Linear.weight[out,in]`, performs complete D=32 or D=128 BF16 tensor-core
+  dots with FP32 accumulation, adds the same packed BF16 bias in FP32, and
+  explicitly rounds to BF16 before storing Q/K/V. Its K=32 reduction tiles and
+  weight orientation copy the already strict-correct fused FFN linear
+  structure. Only output address calculation changes: packed feature
+  `p*D+h*HD+d` and row `b*S+s` map to `[p,b,h,s,d]`. QK scaling/masking,
+  native FP32 softmax, probability rounding, PV, projections, residual order,
+  later LayerNorm/FFN work, weights, baseline, harness, and thresholds remain
+  unchanged. Triton versus cuBLAS reduction lowering remains an empirical
+  strict-correctness risk.
+- Dispatch/fallback: require eval plus inference/no-grad, CUDA BF16, contiguous
+  normalized input, causal attention with no effective token mask, packed QKV
+  bias, and one of exact `(B,S,D,H)` shapes `(16,128,128,4)`,
+  `(64,32,128,4)`, `(64,128,32,4)`, `(64,128,128,1)`,
+  `(64,128,128,2)`, `(64,128,128,4)`, `(64,128,128,16)`,
+  `(64,1024,128,4)`, or `(128,128,128,4)`. Training, gradients, CPU,
+  non-BF16, masks, noncausal/custom shapes, cases 2/3/6/8/14, missing bias,
+  baseline, public interface, and all existing candidate routes retain I06.
+- I06 target candidate medians for cases 1/4/5/7/9/10/11/12/13 are
+  `0.575488 / 0.235520 / 1.170432 / 0.498688 / 0.506880 / 0.499792 /
+  1.164288 / 0.169984 / 35.577854 ms`. Their equal-case candidate-latency
+  geometric mean is `0.804468593 ms`.
+- Preregistered broad gate: all nine cases and all five trials must pass strict
+  `abs_error < 0.002 OR abs_error < 0.02 * abs(reference)` correctness before
+  performance is interpreted. Promote broadly only if candidate-latency
+  geometric mean is at most `0.796423907 ms` (at least 1% below I06), no target
+  exceeds its I06 median by more than 3%, and round medians do not expose an
+  unstable apparent gain. Otherwise retain I06. The sole follow-up, if used,
+  may only fix one concrete compile/address bug or prune to an evidenced
+  multi-case winning subset; it may not retune unrelated launch parameters.
+- Pre-GPU validation: `git diff --check`; full facade/package/test Python
+  compilation; 23/23 standard-library unit tests including exact dispatch,
+  `[3,B,H,S,HD]` storage layout, weight orientation, and BF16 boundary checks;
+  and the prescribed CPU BF16 smoke passed. The smoke was bitwise exact with
+  `0 / 128` failures on the unchanged CPU fallback and is not GPU performance
+  evidence.
+- Focused ordinary GPU job, snapshot, deterministic correctness, raw timings,
+  and final decision are pending.

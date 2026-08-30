@@ -110,6 +110,78 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertNotIn("(10000, 128, 128, 4)", qk_only_block)
         self.assertNotIn("(64, 128, 128, 2)", qk_only_block)
 
+    def test_direct_qkv_dispatch_is_exact_shape_and_inference_only(self) -> None:
+        attention = UserOptimizedTransformer(
+            TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        ).layers[0].attention
+        source = inspect.getsource(attention._project_qkv)
+        direct_block = source.split("use_direct_layout =", 1)[1].split(
+            "if use_direct_layout:", 1
+        )[0]
+
+        for declared_shape in (
+            "(16, 128, 128, 4)",
+            "(64, 32, 128, 4)",
+            "(64, 128, 32, 4)",
+            "(64, 128, 128, 1)",
+            "(64, 128, 128, 2)",
+            "(64, 128, 128, 4)",
+            "(64, 128, 128, 16)",
+            "(64, 1024, 128, 4)",
+            "(128, 128, 128, 4)",
+        ):
+            self.assertIn(declared_shape, direct_block)
+        self.assertIn("torch.is_inference_mode_enabled()", direct_block)
+        self.assertIn("not torch.is_grad_enabled()", direct_block)
+        self.assertIn('x.device.type == "cuda"', direct_block)
+        self.assertIn("x.dtype == torch.bfloat16", direct_block)
+        self.assertIn("x.is_contiguous()", direct_block)
+
+        forward_source = inspect.getsource(attention.forward)
+        self.assertIn(
+            "direct_layout=causal and valid_token_mask is None",
+            forward_source,
+        )
+
+    def test_direct_qkv_backing_exposes_three_contiguous_bhsd_views(self) -> None:
+        output = torch.empty(3, 2, 4, 8, 4)
+        query, key, value = output.unbind(dim=0)
+
+        for projected in (query, key, value):
+            self.assertEqual(tuple(projected.shape), (2, 4, 8, 4))
+            self.assertEqual(tuple(projected.stride()), (128, 32, 4, 1))
+            self.assertTrue(projected.is_contiguous())
+        self.assertEqual(
+            len(
+                {
+                    projected.untyped_storage().data_ptr()
+                    for projected in (query, key, value)
+                }
+            ),
+            1,
+        )
+        self.assertEqual(
+            [projected.storage_offset() for projected in (query, key, value)],
+            [0, 256, 512],
+        )
+
+    def test_direct_qkv_preserves_linear_weight_and_bf16_boundaries(self) -> None:
+        from transformer_benchmark.direct_qkv import (
+            _bf16_qkv_direct_layout_kernel,
+            bf16_qkv_direct_layout,
+        )
+
+        kernel_source = inspect.getsource(_bf16_qkv_direct_layout_kernel.fn.fn)
+        wrapper_source = inspect.getsource(bf16_qkv_direct_layout)
+        self.assertIn(
+            "output_columns[None, :] * width",
+            kernel_source,
+        )
+        self.assertIn("tl.dot(activation, weight, out_dtype=tl.float32)", kernel_source)
+        self.assertIn(".to(tl.bfloat16)", kernel_source)
+        self.assertIn("(3, batch, num_heads, sequence_length, head_dimension)", wrapper_source)
+        self.assertIn("output.unbind(dim=0)", wrapper_source)
+
     def test_packed_value_kernel_accepts_strided_value_layout(self) -> None:
         from transformer_benchmark.pv_context import bf16_probability_value
 
