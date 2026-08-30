@@ -662,3 +662,82 @@
   retains a material candidate improvement versus I03, aggregate geomean,
   total-call latency, and MFU all improve, and no unsupported-path regression
   is evidenced by this job.
+
+## Small-shape fusion E01 - extend exact FFN GELU fusion to cases 4/12
+
+- Status: focused `promote`; no follow-up job was submitted.
+- Historical best: I04 implementation head
+  `2204240bebaebf26aef5be3f26f5a29c6d519dee`, unified ordinary job
+  `job-1788127778535-ebd60f321c76182d`, snapshot
+  `42556ecebb98432a351e0a1baa5c330b3733aca665483dcd4b01a0b8fd6dfd03`.
+  Cases 4/12 are bitwise exact and have candidate medians
+  `0.242688 / 0.176128 ms`; their equal-case candidate-latency geometric mean
+  is `0.206746589 ms`.
+- Exact targets: official CUDA BF16 cases 4/12,
+  `(B,S,D,H,FFN)=(16,128,128,4,128)/(64,32,128,4,128)`. Both flatten to the
+  same 2048-by-128 first FFN projection in each of four layers. Their attention
+  PV path remains the I04 full-HD32 winner and is not retuned by this experiment.
+- Bottleneck hypothesis: I04 runs native `nn.Linear` into a materialized BF16
+  hidden tensor and then launches exact `F.gelu` separately for these shapes.
+  Extending the already-proven candidate Triton linear-plus-exact-erf-GELU
+  kernel removes four intermediate BF16 global write/read pairs and four GELU
+  launches per complete model call. At 2048 rows the existing autotune key is
+  new, so its launch selection cannot perturb the proven 8192/16384-row cases.
+- Numerical boundary: the kernel accumulates the 128-wide BF16 dot and bias in
+  FP32, explicitly rounds the post-bias result to BF16 exactly where native
+  `nn.Linear` materializes it, converts that rounded value to FP32 for the same
+  exact-erf GELU formula, then stores BF16. It does not alter LayerNorm,
+  attention QK/softmax/PV, residual ordering, later FFN projection, graph
+  output cloning, weights, inputs, or the strict correctness rule. The
+  existing cases 1/5/9/10/11 dispatch remains byte-for-byte unchanged apart
+  from adding two exact members to its shape set.
+- Dispatch and fallback: require eval, inference mode, gradients disabled,
+  CUDA BF16, no effective token mask, exact `x.shape` `(16,128,128)` or
+  `(64,32,128)`, and 128-by-128 FFN dimensions. CPU, other dtypes/shapes,
+  masks, training/grad, unsupported widths, and all other official/custom
+  cases retain native `nn.Linear` plus `F.gelu(approximate="none")`.
+- Scope and decision gate: the complete new dispatch scope is exactly cases
+  4/12. Both must pass five strict trials under
+  `abs_error < 0.002 OR abs_error < 0.02 * abs(reference)` before timing is
+  interpreted. Promote only if their equal-case candidate-latency geometric
+  mean is at most `0.204679123 ms` (at least 1% below I04) and neither target
+  exceeds its I04 median by more than 0.5% (`0.243901440 / 0.177008640 ms`).
+  Otherwise retain I04; any compile/execution/correctness failure rejects E01.
+  Only one focused ordinary GPU job is authorized for this worktree.
+- Pre-GPU validation: `git diff --check`; full facade/package/test Python
+  compilation; 19/19 standard-library unit tests including exact-shape and
+  fallback gate predicates; and the prescribed CPU BF16 smoke all passed. The
+  CPU smoke was bitwise exact (`0 / 128` failed elements) and exercised the
+  unchanged fallback only; it is not GPU performance evidence. No dependency
+  or benchmark-control code changed.
+- Focused ordinary job: `job-1788128412458-0e5ce318734f1236`, immutable
+  snapshot `94f5fa4a8b6617978608c8ecd6d027d4bcb0f8766c0a137b62dfe33693cf8aa0`
+  from pre-result commit `13fa3ae83c12697f2ec54f3e7430d1a55fd29256`.
+  It requested and completed exactly official cases 4/12, exited zero in state
+  `succeeded`, and recorded complete structured output with no failure
+  category. The environment was RTX 4070, Python 3.12.14, PyTorch
+  2.13.0+cu130, CUDA 13.0, BF16, five accuracy trials, 20 warmups, 100 repeats,
+  and three alternating rounds.
+- Correctness: both cases passed all ten trials bitwise exact under the strict
+  OR rule. Aggregate failures were `0 / 2,621,440`; maximum absolute and
+  relative errors were both zero. Timing is therefore admissible.
+- Same-job baseline/candidate medians and speedups: case 4
+  `0.960512 / 0.235520 ms` (`4.078261x`); case 12
+  `0.951248 / 0.167936 ms` (`5.664349x`). Raw-derived 100-sample round medians
+  were baseline `0.991008 / 0.959392 / 0.959472 ms` and candidate
+  `0.235520 / 0.235520 / 0.235520 ms` for case 4; baseline
+  `0.947552 / 0.952320 / 0.951344 ms` and candidate
+  `0.167936 / 0.167936 / 0.167936 ms` for case 12. All 300 samples per model
+  and case remain in the structured result.
+- I04 comparison: candidate latency fell `2.953584% / 4.651164%`; equal-case
+  candidate-latency geometric mean fell `3.806119%`, from `0.206746589` to
+  `0.198877568 ms`. Same-job baseline medians drifted
+  `-0.950371% / -1.711081%` versus I04, but the paired candidate reductions
+  remain larger by `2.003213 / 2.940083` percentage points and both candidate
+  round triplets are invariant. Neither target regressed, and the preregistered
+  1% geomean and 0.5% per-case gates pass.
+- Decision: `promote` E01 for shared-winner integration. This focused result
+  validates only the complete new cases-4/12 dispatch scope; it is not a
+  unified cases-1/13 claim. Retain the exact fallbacks and require the
+  supervisor's ordinary unified job after layering this commit. Do not submit
+  a follow-up from this worktree.

@@ -644,7 +644,13 @@ class UserOptimizedTransformerBlock(BaselineTransformerBlock):
             and not torch.is_grad_enabled()
             and x.device.type == "cuda"
             and x.dtype == torch.bfloat16
-            and tuple(x.shape) in {(64, 128, 128), (128, 128, 128)}
+            and tuple(x.shape)
+            in {
+                (16, 128, 128),
+                (64, 32, 128),
+                (64, 128, 128),
+                (128, 128, 128),
+            }
             and valid_token_mask is None
             and self.ffn_in.in_features == 128
             and self.ffn_in.out_features == 128

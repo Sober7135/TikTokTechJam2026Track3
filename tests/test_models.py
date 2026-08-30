@@ -189,6 +189,19 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("(32, 32, 32)", wrapper_source)
         self.assertIn("num_warps=8 if row_count == 128 else 4", wrapper_source)
 
+    def test_cases4_and12_extend_exact_gelu_fusion_by_exact_shape(self) -> None:
+        block_source = inspect.getsource(UserOptimizedTransformerBlock.forward)
+        fused_gate = block_source.split("use_fused_ffn_in =", 1)[1].split(
+            "if use_fused_ffn_in:", 1
+        )[0]
+
+        self.assertIn("(16, 128, 128)", fused_gate)
+        self.assertIn("(64, 32, 128)", fused_gate)
+        self.assertIn("x.device.type == \"cuda\"", fused_gate)
+        self.assertIn("x.dtype == torch.bfloat16", fused_gate)
+        self.assertIn("valid_token_mask is None", fused_gate)
+        self.assertNotIn("x.numel()", fused_gate)
+
     def test_full_hd32_pv_sequence_major_layout_is_transpose_contiguous(self) -> None:
         for batch, seq_len in ((16, 128), (64, 32)):
             backing = torch.empty(batch, seq_len, 4, 32)
