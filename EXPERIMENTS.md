@@ -1100,4 +1100,66 @@
   compilation; 23/23 unit tests including the explicit case-7 exclusion; and
   the prescribed CPU BF16 smoke passed. The smoke was bitwise exact with
   `0 / 128` failures on the unchanged CPU fallback and is not GPU performance
-  evidence. The final ordinary GPU job is pending.
+  evidence.
+- Final ordinary job/snapshot: `job-1788133262714-f0936aef42476d7c` /
+  `4710dc2a27e69c62c2f122f0cee4ffd44c15870e1ae3c49df6e9ec61775187ba`;
+  base commit `60ca0da3ddecb85110ca4ad5bd3f7b5dbfe4eacc`. `job.json`
+  records exactly cases 1/4/5/7/9/10/11/12/13 with CUDA BF16, the pinned
+  Python 3.12.14 executable and inventory, state `succeeded`, exit zero, and
+  no error. The structured result is complete and subset-complete on RTX 4070
+  with PyTorch 2.13.0+cu130/CUDA 13.0, five accuracy trials, 20 warmups, 100
+  repeats, and three alternating benchmark rounds.
+- Correctness passed before timing was interpreted. All nine cases and all 45
+  trials were bitwise exact under the strict OR rule: `0 / 77,332,480` failed
+  elements and zero maximum absolute/relative error. This validates the eight
+  selected D=128 direct-layout routes and confirms that pruned D=32 case 7
+  exactly regains I06 behavior.
+
+| Case | Baseline median (ms) | Candidate median (ms) | Same-job speedup | Gain vs I06 candidate |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.422335982 | 0.584703982 | 2.432574476x | -1.576184% |
+| 4 | 0.945183992 | 0.220159993 | 4.293168715x | +6.976750% |
+| 5 | 3.225600004 | 1.178624034 | 2.736750576x | -0.695053% |
+| 7 | 1.098752022 | 0.496639997 | 2.212371192x | +0.412374% |
+| 9 | 0.868351996 | 0.488447994 | 1.777777791x | +3.773583% |
+| 10 | 1.104895949 | 0.508928001 | 2.171026053x | -1.795147% |
+| 11 | 7.272448063 | 1.068032026 | 6.809204110x | +9.012465% |
+| 12 | 0.944127977 | 0.152768001 | 6.180142248x | +11.269374% |
+| 13 | 110.900222778 | 34.620414734 | 3.203318725x | +2.765534% |
+
+- The last column is the preregistered throughput-style candidate-only
+  comparison `I06_median / E02_median - 1`, computed from both structured
+  result files rather than rounded prose. I06 and E02 nine-case candidate
+  latency geometric means are `0.804468589 / 0.779135125 ms`: latency falls
+  `3.149093%`, equivalently old/new gain is `3.251485%`. The same-job paired
+  speedup geometric mean is `3.176203437x`; focused baseline/candidate median
+  sums are `127.781918764 / 39.318718761 ms` (`3.249900373x`).
+- Raw-derived baseline round medians, cases 1/4/5/7/9/10/11/12/13 in order
+  (ms): `1.419968009/1.423359990/1.422335982`,
+  `0.943967998/0.946671993/0.945951998`,
+  `3.222527981/3.227648020/3.226624012`,
+  `1.097104013/1.099776030/1.098991990`,
+  `0.865279973/0.869040012/0.868351996`,
+  `1.100800037/1.107967973/1.104895949`,
+  `7.270400047/7.273551941/7.273471832`,
+  `0.946175992/0.943104029/0.944575995`, and
+  `110.884193420/110.903392792/110.906364441`.
+- Corresponding candidate round medians (ms):
+  `0.583679974/0.584703982/0.582656026`,
+  `0.219136000/0.219215997/0.220159993`,
+  `1.179136038/1.180672050/1.171967983`,
+  `0.495615989/0.496639997/0.496639997`,
+  `0.486975998/0.489472002/0.487423986`,
+  `0.506879985/0.512000024/0.509952009`,
+  `1.045503974/1.070592046/1.045503974`,
+  `0.152800001/0.152608000/0.152751997`, and
+  `34.619392395/34.614273071/34.629631042`. Every apparent winning case keeps
+  all three rounds below its I06 aggregate median; the three regressions are
+  bounded below the preregistered limit.
+- Decision: focused `promote` E02 for shared-winner integration. The nine-case
+  geometric-mean gain exceeds 1%, and the worst target regression is case 10
+  at `1.795147%`, below the allowed 3%; cases 1/5 regress only
+  `1.576184% / 0.695053%`. Integrate both implementation commits so E02's
+  case-7 pruning accompanies E01, then run a new ordinary unified cases-1/13
+  job before making a matrix-wide claim. No further job is permitted from this
+  worktree.
