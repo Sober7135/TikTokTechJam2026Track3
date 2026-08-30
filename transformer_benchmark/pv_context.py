@@ -25,6 +25,7 @@ def _bf16_probability_value_kernel(
     row_start: tl.constexpr,
     row_count: tl.constexpr,
     key_count: tl.constexpr,
+    block_key_count: tl.constexpr,
     head_dim: tl.constexpr,
 ):
     block_bh = tl.program_id(0)
@@ -32,7 +33,7 @@ def _bf16_probability_value_kernel(
     head_index = block_bh % heads
 
     rows = tl.arange(0, row_count)
-    keys = tl.arange(0, key_count)
+    keys = tl.arange(0, block_key_count)
     columns = tl.arange(0, head_dim)
     probability_offsets = (
         batch_index * probability_stride_batch
@@ -50,8 +51,17 @@ def _bf16_probability_value_kernel(
     # This conversion is the exact boundary being fused: native ATen softmax
     # produces FP32 probabilities, while the reference rounds them to BF16
     # before the probability/value matrix multiplication.
-    probabilities = tl.load(probability_ptr + probability_offsets).to(tl.bfloat16)
-    values = tl.load(value_ptr + value_offsets)
+    valid_keys = keys < key_count
+    probabilities = tl.load(
+        probability_ptr + probability_offsets,
+        mask=valid_keys[None, :],
+        other=0.0,
+    ).to(tl.bfloat16)
+    values = tl.load(
+        value_ptr + value_offsets,
+        mask=valid_keys[:, None],
+        other=0.0,
+    )
     accumulator = tl.dot(probabilities, values, out_dtype=tl.float32)
     context = accumulator.to(tl.bfloat16)
 
@@ -86,15 +96,25 @@ def bf16_probability_value(
         raise ValueError("value and context batch/head/sequence dimensions must match")
     if tuple(context.shape) != tuple(value.shape):
         raise ValueError("context and value shapes must match")
-    if (row_count, key_count, value.shape[-1]) not in {
+    prefix_tile = (row_count, key_count, value.shape[-1])
+    if prefix_tile not in {
+        (32, 32, 32),
+        (32, 64, 32),
+        (32, 96, 32),
+        (32, 128, 32),
         (64, 64, 32),
         (64, 128, 32),
         (64, 64, 64),
         (64, 128, 64),
     }:
-        raise ValueError("PV kernel is specialized to case-6/10 prefix chunks")
-    if row_start not in (0, 64) or row_start + row_count > context.shape[-2]:
-        raise ValueError("row range is outside the case-6/10 context")
+        raise ValueError("PV kernel is specialized to declared prefix chunks")
+    allowed_row_starts = (0, 32, 64, 96) if row_count == 32 else (0, 64)
+    if (
+        row_start not in allowed_row_starts
+        or key_count != row_start + row_count
+        or row_start + row_count > context.shape[-2]
+    ):
+        raise ValueError("row/key range is outside the declared prefix context")
     if not probabilities.is_contiguous():
         raise ValueError("PV kernel requires contiguous probabilities")
     if value.stride(-1) != 1:
@@ -119,6 +139,7 @@ def bf16_probability_value(
         row_start=row_start,
         row_count=row_count,
         key_count=key_count,
+        block_key_count=triton.next_power_of_2(key_count),
         head_dim=value.shape[-1],
         num_warps=4,
         num_stages=2,

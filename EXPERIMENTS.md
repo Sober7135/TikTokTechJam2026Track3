@@ -353,3 +353,99 @@
   an explicit audit item while the exact, broad aggregate and total-call gains
   justify promotion.
 - Decision: `promote` all three implementations as the shared winner.
+
+## Cases-1/5 HD32 PV E01 - direct final-layout Triton prefix context
+
+- Status: focused `promote`; ready for shared-winner integration and a new
+  unified validation, with no follow-up job from this worktree.
+- Parent: verified I03 implementation commit
+  `f157bcd0d1ba470664d1742f94eb5fb62bfc4fe6`; comparable unified job
+  `job-1788124928473-8295c78ca0925273`, snapshot
+  `63cd5873b3bf87a0e1cfd66a5e34c6e43a8bd384e54c3db0806bf88743263557`.
+  I03 candidate medians for cases 1/5 are `0.7065600157 / 1.4151680470 ms`.
+  Their raw 100-sample round medians are respectively
+  `0.706560/0.706560/0.706560 ms` and
+  `1.417216/1.416192/1.413120 ms`.
+- Exact targets: official CUDA BF16 cases 1 and 5, `(B,S,D,H,HD)` equal to
+  `(64,128,128,4,32)` or `(128,128,128,4,32)`. I03 already uses four 32-row
+  compact causal score/native FP32-softmax prefixes per layer. It then casts
+  each probability tensor to BF16, calls native PV against a projection-backed
+  strided V view, materializes four dense prefix contexts, and concatenates
+  them. The hypothesis is that the already validated direct-write Triton PV
+  boundary from cases 6/10 can avoid the native strided-V/output setup,
+  per-prefix cast tensor, and final concatenation while retaining the faster
+  I03 32-row schedule.
+- Implementation: extend `bf16_probability_value` to the four exact
+  `(M,K,N)` tiles `(32,32,32)`, `(32,64,32)`, `(32,96,32)`, and
+  `(32,128,32)`. For only the two target query shapes, allocate the existing
+  compact sequence-major context backing, write every disjoint prefix through
+  the custom kernel, and reuse the already-contiguous `[B,S,H,HD]` transpose
+  view for the unchanged attention output projection. QK score generation,
+  score scaling, the four-prefix schedule, and native FP32 softmax remain
+  unchanged; this is not an online or fused softmax experiment.
+- Non-power-of-two K=96 boundary: the Triton tile uses compile-time
+  `block_key_count=128`, masks probability and V loads at `key < 96`, and
+  supplies exact zero for the 32 padded BF16 entries. Thus the only additional
+  products are `+0 * +0`; no valid probability or V term is dropped or read
+  out of bounds. All paths still materialize native FP32 softmax first, round
+  loaded probabilities explicitly to BF16, multiply BF16 operands with
+  `tl.dot(..., out_dtype=tl.float32)`, and round the context to BF16. Since the
+  custom tensor-core lowering need not reproduce native cuBLAS's reduction tree
+  bitwise, the official strict elementwise check—not algebra alone—is the
+  promotion authority.
+- Dispatch/fallback: eval plus inference/no-grad CUDA BF16, causal, no
+  effective token mask, exact cases 1/5, and their exact four aligned prefix
+  tiles only. Cases 6/10 retain their already-promoted 64-row custom PV path.
+  Every other case, shape, dtype, device, training/grad mode, mask, or invalid
+  tile retains I03's existing native/candidate fallback. Baseline source,
+  weights, public `forward(x, valid_token_mask)` contract, output shape,
+  masking, LayerNorm/FFN/projection behavior, CUDA Graph eligibility, and replay
+  clone ownership are unchanged.
+- Rejected adjacent retries: this does not use the measured-slower 64-row
+  cases-1/5 schedule and does not use native `matmul(out=...)` into the strided
+  final context, which regressed the prior direct-context experiment. The new
+  evidence-bearing difference is the custom PV kernel's explicit-stride loads
+  and stores.
+- Local validation: `git diff --check`; full facade/package/test Python
+  compilation; 15/15 unit tests including exact target and K=96 mask/padding
+  predicates; and the prescribed CPU BF16 smoke all passed. The CPU smoke was
+  bitwise exact (`0 / 128` failed elements). A CPU layout audit confirmed that
+  target `empty_like(query)` contexts use strides `(16384,32,128,1)` and their
+  `[B,S,H,HD]` transpose is contiguous. None of these checks is GPU performance
+  evidence.
+- Preregistered gate: both requested cases must pass strict correctness before
+  latency is interpreted. Promote only if the equal-case geometric mean of
+  candidate latency improves at least 1% against I03 and neither target
+  regresses more than 0.5%. Any correctness/compile/execution failure, smaller
+  improvement, or material per-case regression retains I03. At most this one
+  focused ordinary job is allowed from the worktree.
+- Focused ordinary job: `job-1788126919028-fbcd32a5f1925eae`, immutable
+  snapshot `d629a27f154fcf49281fb4b2ef845e2e556b8a66b99bee0c3dcc9e57cd55a0a2`,
+  base commit `dd657816355dc0ad595a9fec40ef5350104e23c0`. It requested exactly
+  official cases 1/5 and completed with state `succeeded`, exit zero, complete
+  structured output, and no failure category. The environment was RTX 4070,
+  Python 3.12.14, PyTorch 2.13.0+cu130, CUDA 13.0, and BF16, with five accuracy
+  trials, 20 warmups, 100 repeats, and three alternating rounds.
+- Correctness: both requested cases executed and all 10 trials were bitwise
+  exact. The strict `abs < 0.002 OR rel < 0.02` check found zero failures over
+  `15,728,640` elements; maximum absolute and relative errors were both zero.
+- Same-job medians and speedups: case 1 baseline/candidate
+  `1.4223359823 / 0.5765119791 ms`, `2.467140378x`; case 5
+  `3.2256000042 / 1.1704319715 ms`, `2.755905582x`.
+- Raw-derived 100-sample round medians: case 1 baseline
+  `1.420288 / 1.423360 / 1.422336 ms` and candidate
+  `0.575488 / 0.577536 / 0.577536 ms`; case 5 baseline
+  `3.223552 / 3.227648 / 3.225600 ms` and candidate
+  `1.155072 / 1.172480 / 1.175552 ms`. All 300 samples per model/case remain
+  in the structured result.
+- I03 comparison: cases 1/5 candidate latency fell by
+  `18.405802% / 17.293782%`; equal-case geometric-mean latency fell
+  `17.851673%` (equivalently I03/new throughput-style gain `21.731025%`).
+  Same-job baseline drift versus I03 was only `+0.072047% / 0.000000%`, so it
+  does not explain the candidate-only gain. Both targets comfortably clear the
+  preregistered 1% geometric-mean gate with no target regression.
+- Decision: focused `promote` for integration. The measured result validates
+  the padded K=96 mask path as well as the power-of-two prefix tiles under the
+  official end-to-end strict contract. Do not submit a follow-up from this
+  worktree; layer this independent commit onto the shared winner and use a new
+  ordinary unified job before making a full cases 1-13 performance claim.

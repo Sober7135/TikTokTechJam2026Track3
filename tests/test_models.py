@@ -118,6 +118,28 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("value.stride(-1) != 1", source)
         self.assertIn("(64, 128, 64)", source)
 
+    def test_cases1_and5_use_direct_pv_prefix_tiles(self) -> None:
+        from transformer_benchmark.pv_context import (
+            _bf16_probability_value_kernel,
+            bf16_probability_value,
+        )
+
+        config = TransformerConfig(64, 128, 128, 4, 128, 4, True)
+        attention = UserOptimizedTransformer(config).layers[0].attention
+        chunk_source = inspect.getsource(attention._chunked_triangular_context)
+        forward_source = inspect.getsource(attention.forward)
+        wrapper_source = inspect.getsource(bf16_probability_value)
+        kernel_source = inspect.getsource(_bf16_probability_value_kernel.fn)
+
+        self.assertIn("(64, 4, 128, 32)", chunk_source)
+        self.assertIn("(128, 4, 128, 32)", chunk_source)
+        self.assertIn("(64, 128, 128, 4)", forward_source)
+        self.assertIn("(128, 128, 128, 4)", forward_source)
+        self.assertIn("(32, 96, 32)", wrapper_source)
+        self.assertIn("key_count != row_start + row_count", wrapper_source)
+        self.assertIn("block_key_count", kernel_source)
+        self.assertIn("mask=valid_keys", kernel_source)
+
     def test_mask_classification_tracks_mutation_and_inference_tensors(self) -> None:
         config = TransformerConfig(1, 128, 128, 4, 128, 4, True)
         optimized = UserOptimizedTransformer(config).eval()
