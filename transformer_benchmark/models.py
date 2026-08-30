@@ -522,7 +522,27 @@ class UserOptimizedTransformerBlock(BaselineTransformerBlock):
         causal: bool,
     ) -> torch.Tensor:
         x = x + self.attention(self.norm1(x), valid_token_mask, causal)
-        hidden = F.gelu(self.ffn_in(self.norm2(x)), approximate="none")
+        use_fused_ffn_in = (
+            not self.training
+            and torch.is_inference_mode_enabled()
+            and not torch.is_grad_enabled()
+            and x.device.type == "cuda"
+            and x.dtype == torch.bfloat16
+            and tuple(x.shape) in {(64, 128, 128), (128, 128, 128)}
+            and valid_token_mask is None
+            and self.ffn_in.in_features == 128
+            and self.ffn_in.out_features == 128
+        )
+        if use_fused_ffn_in:
+            from .fused_ffn import bf16_linear_exact_gelu
+
+            hidden = bf16_linear_exact_gelu(
+                self.norm2(x),
+                self.ffn_in.weight,
+                self.ffn_in.bias,
+            )
+        else:
+            hidden = F.gelu(self.ffn_in(self.norm2(x)), approximate="none")
         use_candidate_cublaslt = (
             not self.training
             and torch.is_inference_mode_enabled()
