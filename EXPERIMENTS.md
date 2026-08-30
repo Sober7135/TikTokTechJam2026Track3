@@ -1294,3 +1294,65 @@
   prescribed CPU BF16 smoke was bitwise exact with `0 / 128` failures on the
   unchanged CPU fallback; it is not GPU performance evidence. Ordinary GPU
   job/snapshot, correctness, raw timings, and decision are pending.
+## I07 direct-layout QKV E03 deterministic review
+
+- Ordinary job/snapshot/base commit:
+  `job-1788134032351-e0096467490e18c4` /
+  `89995518531311186a244ba59c346a16e32fb4fc06fcff76a96a049006cc96dd` /
+  `9e4db9f0063495b40e0f3873f43144241048b2d0`. `job.json` records the exact
+  preregistered Cases 1/4/5/7/9/10/11/12/13 arguments, pinned Python 3.12.14
+  executable and inventory, state `succeeded`, exit zero, and no error. The
+  structured result is complete on RTX 4070 with PyTorch 2.13.0+cu130, CUDA
+  13.0, BF16, five accuracy trials, 20 warmups, 100 repeats, and three rounds.
+- Correctness passed before timing interpretation. All nine cases and all 45
+  trials were bitwise exact under the strict OR rule: `0 / 77,332,480` failed
+  elements with zero maximum absolute and relative error.
+
+| Case | I07 candidate (ms) | E03 baseline (ms) | E03 candidate (ms) | I07/E03 gain | Same-job speedup |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.582656026 | 1.422335982 | 0.577535987 | +0.886532% | 2.462765983x |
+| 4 | 0.220159993 | 0.946175992 | 0.220159993 | +0.000000% | 4.297674529x |
+| 5 | 1.179648042 | 3.225600004 | 1.170431972 | +0.787408% | 2.755905582x |
+| 7 | 0.498688012 | 1.101824045 | 0.496639997 | +0.412374% | 2.218556806x |
+| 9 | 0.496639997 | 0.867327988 | 0.486400008 | +2.105261% | 1.783157840x |
+| 10 | 0.512000024 | 1.104911983 | 0.497664005 | +2.880662% | 2.220196705x |
+| 11 | 1.077247977 | 7.274496078 | 1.074175954 | +0.285989% | 6.772164330x |
+| 12 | 0.153600007 | 0.939007998 | 0.152575999 | +0.671146% | 6.154362420x |
+| 13 | 34.628608704 | 110.898178101 | 34.626560211 | +0.005916% | 3.202691155x |
+
+- The I07 reference is unified job `job-1788133519165-d75dd352756ff0bf`.
+  The last-but-one column is the candidate-only throughput-style comparison
+  `I07_median / E03_median - 1`, calculated from both structured results. The
+  nine-case candidate-latency geometric mean falls from `0.782465276319` to
+  `0.775573395184 ms`: latency is `0.880790668%` lower, equivalently old/new
+  gain is `0.888617528%`. Same-job paired speedup geomean is `3.189903914x`;
+  focused baseline/candidate median sums are
+  `127.779858172 / 39.302144125 ms` (`3.251218503x`).
+- Raw-derived baseline round medians, Cases 1/4/5/7/9/10/11/12/13 in order
+  (ms): `1.420287967/1.422447979/1.422335982`,
+  `0.946079999/0.947183996/0.945487976`,
+  `3.223551989/3.226624012/3.225600004`,
+  `1.099471986/1.102303982/1.102560043`,
+  `0.864256024/0.869376004/0.868351996`,
+  `1.103871942/1.105919957/1.105919957`,
+  `7.274496078/7.273983955/7.274496078`,
+  `0.938816011/0.939007998/0.939536005`, and
+  `110.897155762/110.899200439/110.899200439`.
+- Corresponding candidate round medians (ms):
+  `0.576511979/0.579584002/0.576511979`,
+  `0.220159993/0.220159993/0.221184000`,
+  `1.163264036/1.173503995/1.171967983`,
+  `0.496639997/0.496639997/0.496639997`,
+  `0.483328015/0.494592011/0.487423986`,
+  `0.495615989/0.498688012/0.498688012`,
+  `1.078271985/1.076223969/1.069056034`,
+  `0.152575999/0.152575999/0.152575999`, and
+  `34.629631042/34.626560211/34.625537872`. Candidate round spread is at most
+  `2.310924%` (Case 9); all other cases are below `0.874%`, with no aggregate
+  regression or unstable sign that changes the gate decision.
+- Decision: focused `promote`. Strict 45/45 correctness passes, the nine-case
+  old/new geomean gain `0.888618%` exceeds the preregistered `0.5%` threshold,
+  and every case is non-regressing versus I07, comfortably inside the `1.5%`
+  limit. No bug follow-up is needed. Integrate the implementation commit into
+  the shared winner and require a new ordinary unified Cases 1-13 job before a
+  matrix-wide promotion claim.
