@@ -261,11 +261,56 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
             return context
         return torch.cat(context_chunks, dim=-2)
 
+    def _project_output_with_residual(
+        self,
+        context: torch.Tensor,
+        residual: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        use_fused_attention_out = (
+            residual is not None
+            and not self.training
+            and torch.is_inference_mode_enabled()
+            and not torch.is_grad_enabled()
+            and context.device.type == "cuda"
+            and context.dtype == torch.bfloat16
+            and tuple(context.shape)
+            in {
+                (4, 128, 128),
+                (16, 128, 128),
+                (64, 32, 128),
+                (64, 128, 128),
+                (128, 128, 128),
+            }
+            and tuple(residual.shape) == tuple(context.shape)
+            and residual.device == context.device
+            and residual.dtype == torch.bfloat16
+            and context.is_contiguous()
+            and residual.is_contiguous()
+            and self.out_proj.in_features == 128
+            and self.out_proj.out_features == 128
+            and self.out_proj.bias is not None
+        )
+        if use_fused_attention_out:
+            from .fused_attention_out import bf16_attention_out_residual
+
+            return bf16_attention_out_residual(
+                context,
+                self.out_proj.weight,
+                self.out_proj.bias,
+                residual,
+            )
+
+        projection = self.out_proj(context)
+        if residual is not None:
+            return residual + projection
+        return projection
+
     def forward(
         self,
         x: torch.Tensor,
         valid_token_mask: Optional[torch.Tensor] = None,
         causal: bool = False,
+        residual: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         batch, seq_len, _ = x.shape
 
@@ -324,7 +369,7 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                 .contiguous()
                 .view(batch, seq_len, self.d_model)
             )
-            return self.out_proj(context)
+            return self._project_output_with_residual(context, residual)
 
         use_large_compiled_pointwise = (
             not self.training
@@ -464,10 +509,15 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
             .contiguous()
             .view(batch, seq_len, self.d_model)
         )
-        output = self.out_proj(context)
+        output = self._project_output_with_residual(
+            context,
+            residual if valid_token_mask is None else None,
+        )
 
         if valid_token_mask is not None:
             output = output.masked_fill(~valid_token_mask[..., None], 0)
+            if residual is not None:
+                output = residual + output
         return output
 
 
@@ -533,7 +583,15 @@ class UserOptimizedTransformerBlock(BaselineTransformerBlock):
         valid_token_mask: Optional[torch.Tensor],
         causal: bool,
     ) -> torch.Tensor:
-        x = x + self.attention(self.norm1(x), valid_token_mask, causal)
+        if valid_token_mask is None:
+            x = self.attention(
+                self.norm1(x),
+                valid_token_mask,
+                causal,
+                residual=x,
+            )
+        else:
+            x = x + self.attention(self.norm1(x), valid_token_mask, causal)
         use_fused_ffn_in = (
             not self.training
             and torch.is_inference_mode_enabled()

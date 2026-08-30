@@ -47,6 +47,22 @@ class UserOptimizedTransformerTests(unittest.TestCase):
                 tuple(layer.attention._cached_causal_mask.shape), (128, 128)
             )
 
+    def test_attention_residual_cpu_fallback_preserves_operation_order(self) -> None:
+        config = TransformerConfig(4, 8, 16, 4, 32, 1, True)
+        torch.manual_seed(4321)
+        baseline = BaselineTransformer(config).eval()
+        optimized = UserOptimizedTransformer(config).eval()
+        copy_model_weights(baseline, optimized)
+
+        x = torch.randn(4, 8, 16)
+        with torch.inference_mode():
+            reference = baseline(x, None)
+            candidate = optimized(x, None)
+
+        result = compare_outputs(reference, candidate, rtol=0.02, atol=0.002)
+        self.assertTrue(result.passed)
+        self.assertTrue(torch.equal(reference, candidate))
+
     def test_legacy_qkv_weights_are_packed_in_order(self) -> None:
         config = TransformerConfig(1, 8, 16, 4, 32, 1, True)
         baseline = BaselineTransformer(config).eval()

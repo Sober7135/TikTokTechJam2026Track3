@@ -196,3 +196,73 @@
 - Decision: promote as the new shared winner. Versus the prior unified winner,
   equal-case geomean rose `1.9984%`, total candidate latency fell `0.0289%`,
   and aggregate MFU rose `0.004407` percentage points.
+
+## E02 - Attention output projection plus residual
+
+- Status: promoted as an independent winner; combination with the independent
+  FFN-output winner still requires a unified integration job.
+- Parent: auditable shared winner commit `7c6ab1c8371024c7c4743f9539221ee536464a04`.
+- Hypothesis: official BF16 cases 1, 3, 4, 5, 9, 10, 11, and 12 each
+  materialize a 128-wide attention output projection and then launch a separate
+  residual add in every Transformer layer. Removing that launch and intermediate
+  write should reduce latency across the shared shape family.
+- Implementation: a candidate-only Triton 128-by-128 output projection consumes
+  the BF16 residual in its epilogue. The internal optimized-attention call can
+  accept the block residual, while the public
+  `UserOptimizedTransformer.forward(x, valid_token_mask)` contract is unchanged.
+- Numerical boundary: the dot product and bias accumulate in FP32, the
+  projection is explicitly rounded to BF16 at the native `nn.Linear`
+  materialization boundary, and only then is the BF16 residual added before the
+  final BF16 store. This is not the rejected beta-times-C shortcut and does not
+  replace softmax or LayerNorm reductions.
+- Dispatch: exact context/residual shapes `(4,128,128)`, `(16,128,128)`,
+  `(64,32,128)`, `(64,128,128)`, and `(128,128,128)` under CUDA BF16 inference,
+  no grad, no padding mask, 128-by-128 output weights, and contiguous tensors.
+  These are cases 3, 4, 12, 1/9/10/11, and 5 respectively.
+- Fallback: cases 2, 6, 7, 8, 13, and 14, plus training, grad-enabled,
+  non-inference, CPU, non-BF16, padded-mask, undeclared-shape, non-128, or
+  non-contiguous calls retain native `out_proj` followed by residual addition.
+  Baseline source, weight copying, masks, and CUDA Graph output cloning are
+  unchanged.
+- Local validation: `git diff --check` and Python compilation passed; all 7
+  model unit tests passed; the required CPU BF16 smoke was bitwise exact with
+  `0 / 128` failed elements. CPU timing is not GPU performance evidence.
+
+### Focused GPU evidence
+
+- Job: `job-1788124074308-3c724497113d7eb1`.
+- Submitted source commit: `87d245933ab691fa1d10f5cea9ad509d65209716`.
+- Immutable snapshot:
+  `3720e7c4edb66df141a6c32ee9b86cb0d6a6f318e3a55d09a32c4233d67efbc3`.
+- Arguments: CUDA BF16 official cases `1 3 4 5 9 10 11 12`; five accuracy
+  trials, 20 warmups, 100 repeats, and three alternating benchmark rounds.
+- Environment: NVIDIA GeForce RTX 4070, Python 3.12.14, PyTorch
+  2.13.0+cu130, CUDA 13.0, matmul precision `high`, and TF32 enabled equally
+  for baseline and candidate.
+- Deterministic result: state `succeeded`, exit code 0, complete matrix subset,
+  and `correctness_passed=true`. All 40 trials were bitwise exact: zero failures
+  over 34,406,400 elements and maximum absolute/relative errors both zero.
+- Raw structured result:
+  `.benchmarkctl/jobs/job-1788124074308-3c724497113d7eb1/result.json`.
+
+| Case | Baseline median (ms) | Candidate median (ms) | Same-job speedup | Improvement vs shared winner |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.420288 | 0.729088 | 1.948034x | 3.51124% |
+| 3 | 0.935936 | 0.128000 | 7.311999x | 3.999995% |
+| 4 | 0.947200 | 0.273712 | 3.460572x | 3.63009% |
+| 5 | 3.225600 | 1.432576 | 2.251608x | 3.14511% |
+| 9 | 0.867328 | 0.524288 | 1.654297x | 4.88282% |
+| 10 | 1.103872 | 0.634880 | 1.738710x | 4.83871% |
+| 11 | 7.285344 | 1.304576 | 5.584453x | 2.82574% |
+| 12 | 0.938704 | 0.209920 | 4.471722x | 4.87804% |
+
+- The preregistered comparison uses the common-parent shared-winner job
+  `job-1788121832512-dc0a634f40e6600f`. Equal-case candidate latency geomean
+  improved by 3.96113%, and every target improved, satisfying the required
+  geomean-at-least-1% and no-regression-over-0.5% gates.
+- For context only, this attention-only result is 0.7532% faster in equal-case
+  geomean than the newer independent FFN-output-only unified job
+  `job-1788123970631-bca84587ca0e6e73`. That cross-sibling comparison is not
+  combination evidence; both commits must be stacked and validated together.
+- Decision: `promote` as an independent optimization winner. No follow-up job
+  was submitted from this worktree.
