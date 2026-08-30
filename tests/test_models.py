@@ -1,0 +1,90 @@
+import copy
+import unittest
+
+import torch
+
+from transformer_benchmark.cases import TransformerConfig
+from transformer_benchmark.correctness import compare_outputs
+from transformer_benchmark.models import (
+    BaselineTransformer,
+    UserOptimizedTransformer,
+    copy_model_weights,
+)
+
+
+class UserOptimizedTransformerTests(unittest.TestCase):
+    def test_case2_cpu_fallback_preserves_strict_contract(self) -> None:
+        config = TransformerConfig(1, 128, 128, 4, 128, 4, True)
+        torch.manual_seed(1234)
+        baseline = BaselineTransformer(config).eval()
+        optimized = UserOptimizedTransformer(config).eval()
+        copy_model_weights(baseline, optimized)
+
+        x = torch.randn(1, 128, 128)
+        valid_token_mask = torch.ones(1, 128, dtype=torch.bool)
+        valid_token_mask[:, -32:] = False
+        x = x.masked_fill(~valid_token_mask[..., None], 0)
+        with torch.inference_mode():
+            reference = baseline(x, valid_token_mask)
+            candidate = optimized(x, valid_token_mask)
+
+        result = compare_outputs(reference, candidate, rtol=0.02, atol=0.002)
+        self.assertTrue(result.passed)
+        self.assertIsNone(optimized._cuda_graph)
+        for layer in optimized.layers:
+            self.assertEqual(
+                tuple(layer.attention._cached_causal_mask.shape), (128, 128)
+            )
+
+    def test_legacy_qkv_weights_are_packed_in_order(self) -> None:
+        config = TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        baseline = BaselineTransformer(config).eval()
+        optimized = UserOptimizedTransformer(config).eval()
+        copy_model_weights(baseline, optimized)
+
+        source = baseline.layers[0].attention
+        packed = optimized.layers[0].attention.qkv_proj
+        width = config.d_model
+        self.assertTrue(torch.equal(packed.weight[:width], source.q_proj.weight))
+        self.assertTrue(
+            torch.equal(packed.weight[width : 2 * width], source.k_proj.weight)
+        )
+        self.assertTrue(torch.equal(packed.weight[2 * width :], source.v_proj.weight))
+        self.assertTrue(torch.equal(packed.bias[:width], source.q_proj.bias))
+        self.assertTrue(
+            torch.equal(packed.bias[width : 2 * width], source.k_proj.bias)
+        )
+        self.assertTrue(torch.equal(packed.bias[2 * width :], source.v_proj.bias))
+
+    def test_packed_state_dict_round_trip(self) -> None:
+        config = TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        baseline = BaselineTransformer(config).eval()
+        optimized = UserOptimizedTransformer(config).eval()
+        copy_model_weights(baseline, optimized)
+        saved = copy.deepcopy(optimized.state_dict())
+
+        reloaded = UserOptimizedTransformer(config).eval()
+        reloaded.load_state_dict(saved, strict=True)
+        actual = reloaded.state_dict()
+        self.assertEqual(saved.keys(), actual.keys())
+        for key in saved:
+            self.assertTrue(torch.equal(saved[key], actual[key]), key)
+
+    def test_mask_classification_tracks_mutation_and_inference_tensors(self) -> None:
+        config = TransformerConfig(1, 128, 128, 4, 128, 4, True)
+        optimized = UserOptimizedTransformer(config).eval()
+
+        mask = torch.ones(1, 128, dtype=torch.bool)
+        self.assertTrue(optimized._mask_is_all_true(mask))
+        mask[0, -1] = False
+        self.assertFalse(optimized._mask_is_all_true(mask))
+
+        with torch.inference_mode():
+            inference_mask = torch.ones(1, 128, dtype=torch.bool)
+            self.assertTrue(optimized._mask_is_all_true(inference_mask))
+            inference_mask[0, -1] = False
+            self.assertFalse(optimized._mask_is_all_true(inference_mask))
+
+
+if __name__ == "__main__":
+    unittest.main()

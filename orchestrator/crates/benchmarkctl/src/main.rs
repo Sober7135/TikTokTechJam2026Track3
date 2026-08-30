@@ -23,6 +23,7 @@ const MAX_OUTSTANDING_JOBS: usize = 4;
 const QUEUE_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const RESULT_LIMIT_BYTES: u64 = 8 * 1024 * 1024;
 const ENVIRONMENT_PROBE_LIMIT_BYTES: usize = 1024 * 1024;
+const PYTORCH_CUDA_ALLOC_CONF: &str = "expandable_segments:True";
 const PYTHON_ENVIRONMENT_PROBE: &str = r#"
 import importlib.metadata as metadata
 import json
@@ -1046,6 +1047,8 @@ fn execute_benchmark(execution: Execution<'_>) -> Result<ProcessOutcome> {
         "{}:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin",
         python_bin.display()
     );
+    let compiler = resolve_c_compiler();
+    let triton_libcuda_path = resolve_triton_libcuda_path();
 
     let gpu_lock_path = repository.state_root.join("gpu.lock");
     let mut command = Command::new(flock);
@@ -1058,6 +1061,7 @@ fn execute_benchmark(execution: Execution<'_>) -> Result<ProcessOutcome> {
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("PYTHONNOUSERSITE", "1")
         .env("PYTHONUNBUFFERED", "1")
+        .env("PYTORCH_CUDA_ALLOC_CONF", PYTORCH_CUDA_ALLOC_CONF)
         .env("CUDA_VISIBLE_DEVICES", &options.gpu_device)
         .arg("--exclusive")
         .arg(&gpu_lock_path)
@@ -1069,6 +1073,12 @@ fn execute_benchmark(execution: Execution<'_>) -> Result<ProcessOutcome> {
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_error))
         .process_group(0);
+    if let Some(compiler) = compiler {
+        command.env("CC", compiler);
+    }
+    if let Some(triton_libcuda_path) = triton_libcuda_path {
+        command.env("TRITON_LIBCUDA_PATH", triton_libcuda_path);
+    }
     let mut child = command.spawn().context("failed to start benchmark")?;
     job.benchmark_pid = Some(child.id());
     write_job(repository, job)?;
@@ -1102,6 +1112,30 @@ fn resolve_flock() -> Result<PathBuf> {
         return Ok(path);
     }
     bail!("flock is required but was not found")
+}
+
+fn resolve_c_compiler() -> Option<PathBuf> {
+    for path in [
+        "/usr/bin/cc",
+        "/usr/bin/clang",
+        "/usr/bin/gcc",
+        "/run/current-system/sw/bin/cc",
+        "/run/current-system/sw/bin/clang",
+    ] {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return fs::canonicalize(&path).ok().or(Some(path));
+        }
+    }
+    None
+}
+
+fn resolve_triton_libcuda_path() -> Option<PathBuf> {
+    let directory = PathBuf::from("/run/opengl-driver/lib");
+    if !directory.join("libcuda.so.1").is_file() {
+        return None;
+    }
+    fs::canonicalize(&directory).ok().or(Some(directory))
 }
 
 fn terminate_process_group(pid: u32) {

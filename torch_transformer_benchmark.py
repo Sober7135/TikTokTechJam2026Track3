@@ -15,6 +15,12 @@ The CLI runs the declared official shape matrix by default. Use
 point and import-compatible facade.
 """
 
+from transformer_benchmark.runtime_environment import configure_pre_torch_environment
+
+# The CUDA allocator reads its configuration while PyTorch is imported. Keep
+# this before every facade import below because those modules import torch.
+configure_pre_torch_environment()
+
 from transformer_benchmark.cases import (
     OFFICIAL_TEST_CASES,
     TransformerConfig,

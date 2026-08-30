@@ -6,6 +6,7 @@ import argparse
 import gc
 import json
 import math
+import os
 import platform
 from dataclasses import asdict
 from pathlib import Path
@@ -22,6 +23,19 @@ from .models import (
     copy_model_weights,
 )
 from .timing import benchmark_models
+
+
+NIXOS_LIBCUDA_DIRECTORY = Path("/run/opengl-driver/lib")
+
+
+def configure_triton_driver_path(
+    driver_directory: Path = NIXOS_LIBCUDA_DIRECTORY,
+) -> None:
+    """Point Triton's supported driver lookup at the NixOS driver directory."""
+    if "TRITON_LIBCUDA_PATH" in os.environ:
+        return
+    if driver_directory.joinpath("libcuda.so.1").is_file():
+        os.environ["TRITON_LIBCUDA_PATH"] = str(driver_directory)
 
 
 def resolve_device(device_arg: str) -> torch.device:
@@ -172,6 +186,7 @@ def environment_metadata(device: torch.device, dtype: torch.dtype) -> Dict[str, 
         "torch_version": torch.__version__,
         "cuda_version": torch.version.cuda,
         "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
+        "pytorch_cuda_alloc_conf": os.environ.get("PYTORCH_CUDA_ALLOC_CONF"),
     }
 
 
@@ -244,6 +259,7 @@ def write_json_result(
 def configure_runtime(args: argparse.Namespace, device: torch.device) -> None:
     torch.set_float32_matmul_precision(args.matmul_precision)
     if device.type == "cuda":
+        configure_triton_driver_path()
         torch.backends.cuda.matmul.allow_tf32 = args.allow_tf32
         torch.backends.cudnn.allow_tf32 = args.allow_tf32
 
