@@ -943,3 +943,48 @@
   E02 prunes E01; do not integrate the broad six-shape dispatch by itself.
   Shared-winner source still requires an ordinary unified cases-1/13 job before
   any matrix-wide performance claim.
+
+## Winner integration I06 - exact QK key tiles for cases 6/11
+
+- Source under test: shared-winner implementation head
+  `22e686b809a533293e80868a7b41356b03e9888b`, containing unsigned integration
+  commits `c5b5d43` and `22e686b`. The net runtime dispatch differs from I05
+  only for exact case-6/11 query shapes; all other official/custom paths retain
+  I05 behavior.
+- Unified ordinary job: `job-1788131811786-b0caf8beace8d3d3`, immutable
+  snapshot `8592e0d4e5085a5afa83f71cb49852b3009333d15b029c17e6014201033036fd`.
+  It ran official CUDA BF16 cases 1-13 on RTX 4070 with Python 3.12.14,
+  PyTorch 2.13.0+cu130, CUDA 13.0, five trials, 20 warmups, 100 repeats, and
+  three alternating rounds.
+- Correctness is exact and matrix-complete: all 13 cases executed; all 65
+  trials passed bitwise with `0 / 938,885,120` failed elements and zero maximum
+  absolute/relative error under the unchanged strict elementwise OR rule.
+- Same-job baseline/candidate medians in milliseconds and paired speedups:
+  case 1 `1.421312 / 0.575488` (`2.469751x`); case 2
+  `0.954608 / 0.097280` (`9.812993x`); case 3
+  `0.947600 / 0.126976` (`7.462828x`); case 4
+  `0.960000 / 0.235520` (`4.076087x`); case 5
+  `3.225600 / 1.170432` (`2.755906x`); case 6
+  `414.039032 / 165.830658` (`2.496758x`); case 7
+  `1.101824 / 0.498688` (`2.209446x`); case 8
+  `11.687536 / 10.892288` (`1.073010x`); case 9
+  `0.870400 / 0.506880` (`1.717172x`); case 10
+  `1.110160 / 0.499792` (`2.221244x`); case 11
+  `7.278592 / 1.164288` (`6.251539x`); case 12
+  `0.954256 / 0.169984` (`5.613799x`); and case 13
+  `110.914558 / 35.577854` (`3.117517x`).
+- Paired same-job equal-case speedup geomean is `3.276650791x`. One-call-total
+  speedup is `555.465478 / 217.346128 = 2.555672294x`.
+- Cross-job comparison uses candidate latency only. Versus I05, case 6/11
+  improve `0.822599% / 1.982755%` in the unified run. Across all 13 cases,
+  candidate-latency geomean improves `0.265666%` and total candidate latency
+  improves `0.652306%` (`218.773198 -> 217.346128 ms`). Untargeted movements
+  range from `-0.202426%` to `+0.354615%` and are retained as run-to-run noise;
+  they are not attributed to unreachable exact-shape dispatches.
+- Aggregate MFU is `15.937041%`, derived as
+  `2,017,695,105,024 FLOPs / 0.217346128 s / 58.25e12`, up `0.103958`
+  percentage points from I05 under the same supervisor convention.
+- Decision: `promote` I06 as the shared winner. Unified exactness, targeted
+  candidate improvements, all-case candidate geomean, total-call latency, and
+  MFU all improve. Cases 2/3 remain at or above 7x; the wider 7x-10x objective
+  remains incomplete for most cases and requires further independent rounds.
