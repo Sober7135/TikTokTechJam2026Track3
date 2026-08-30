@@ -140,6 +140,31 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("block_key_count", kernel_source)
         self.assertIn("mask=valid_keys", kernel_source)
 
+    def test_case11_dispatches_hd8_pv_into_sequence_major_backing(self) -> None:
+        attention = UserOptimizedTransformer(
+            TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        ).layers[0].attention
+        chunk_source = inspect.getsource(attention._chunked_triangular_context)
+        self.assertIn(
+            "use_hd8_pv_kernel = tuple(query.shape) == (64, 16, 128, 8)",
+            chunk_source,
+        )
+        self.assertIn("context_sequence_major.permute(0, 2, 1, 3)", chunk_source)
+        self.assertIn("bf16_probability_value_hd8", chunk_source)
+
+        from transformer_benchmark.pv_context import bf16_probability_value_hd8
+
+        wrapper_source = inspect.getsource(bf16_probability_value_hd8)
+        self.assertIn("(batch, heads, row_count) != (64, 16, 16)", wrapper_source)
+        self.assertIn("key_count not in range(16, 129, 16)", wrapper_source)
+        self.assertIn("tuple(value.shape) != (64, 16, 128, 8)", wrapper_source)
+
+        forward_source = inspect.getsource(attention.forward)
+        direct_write_block = forward_source.split("direct_context_write =", 1)[
+            1
+        ].split("context = self._chunked_triangular_context", 1)[0]
+        self.assertIn("(64, 128, 128, 16)", direct_write_block)
+
     def test_mask_classification_tracks_mutation_and_inference_tensors(self) -> None:
         config = TransformerConfig(1, 128, 128, 4, 128, 4, True)
         optimized = UserOptimizedTransformer(config).eval()

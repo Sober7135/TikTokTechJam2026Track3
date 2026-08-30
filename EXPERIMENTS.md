@@ -449,3 +449,72 @@
   official end-to-end strict contract. Do not submit a follow-up from this
   worktree; layer this independent commit onto the shared winner and use a new
   ordinary unified job before making a full cases 1-13 performance claim.
+
+## Case-11 HD8 PV E01 - fuse probability rounding into direct context write
+
+- Status: focused `promote` for integration; no follow-up job was submitted.
+- Parent: verified I03 implementation head
+  `f157bcd0d1ba470664d1742f94eb5fb62bfc4fe6`, whose unified job
+  `job-1788124928473-8295c78ca0925273` measured case-11 candidate median
+  `1.288192 ms` with bitwise-exact correctness.
+- Exact target: official case 11 `(B,S,D,H,HD)=(64,128,128,16,8)` under eval,
+  inference/no-grad, CUDA BF16, causal attention, and no effective token mask.
+  Its unchanged I03 schedule computes eight 16-row prefixes with key counts
+  `16,32,48,64,80,96,112,128` per layer.
+- Hypothesis: fuse each native FP32-probability-to-BF16 materialization with its
+  following BF16 PV dot, and write the BF16 output into a sequence-major final
+  context backing. This replaces eight cast plus eight native matmul launches
+  with eight Triton launches per layer and removes the layer's `torch.cat` and
+  head-major-to-sequence-major copy. Across four layers, this removes 32 cast
+  launches, four cats, four layout copies, and their transient traffic.
+- Numerical boundary: triangular BF16 QK dot and BF16 scale, the 16-row I03
+  schedule, and native ATen FP32 softmax remain unchanged. The new kernel
+  explicitly rounds FP32 probabilities to BF16 before a BF16 tensor-core PV
+  dot, accumulates in FP32, and rounds the result to BF16 before storing it.
+  HD8 is padded only inside the dot tile to 16 columns; columns 8-15 are loaded
+  as exact zero and never stored. Non-power-of-two key counts 48/80/96/112 are
+  padded to the next power-of-two tile with masked exact-zero operands after
+  the complete real K axis. Real K is already a multiple of the tensor-core
+  K=16 step, and adding FP32 zero after it is exact. Whether Triton's reduction
+  order matches native BF16 PV closely enough remains an empirical strict-
+  correctness gate; no performance result is valid unless it passes.
+- Layout: allocate contiguous `[B,S,H,HD]` context backing and expose its
+  `[B,H,S,HD]` permuted view to the stride-aware kernel. The subsequent
+  transpose recovers the contiguous backing, so no second materialization is
+  needed. Prefix row ranges are disjoint and collectively cover all 128 rows.
+- Isolation: the new kernel/wrapper is separate from the already-promoted
+  cases-6/10 PV kernel, leaving that source path and dispatch unchanged.
+  Training, gradients, CPU, non-BF16, masks, other shapes, all other official
+  cases, baseline, weight copying, public interface, LayerNorm/softmax
+  reductions, and CUDA Graph independent-output cloning retain I03 fallback.
+- Preregistered decision gate: strict correctness must pass all five trials;
+  then candidate median must improve at least 1% versus I03 `1.288192 ms`
+  (`<=1.275310 ms`) with stable per-round medians. Otherwise retain I03; an
+  execution or correctness failure rejects E01 without interpreting latency.
+- Pre-GPU validation: `git diff --check`, full facade/package/test Python
+  compilation, 15/15 unit tests, and the prescribed CPU BF16 smoke passed. The
+  CPU smoke was bitwise exact (`0 / 128`) and is not GPU performance evidence.
+- Focused GPU job/snapshot:
+  `job-1788126945825-861eb1e88a6d6a03` /
+  `27db96c45f9f54110cefd85bb1b0614aaeb476ab60c5971a88377a189715443c`.
+  The ordinary job used the pinned root Python 3.12.14 environment on an RTX
+  4070 with PyTorch 2.13.0+cu130, CUDA 13.0, BF16, five accuracy trials, 20
+  warmups, 100 repeats, and three alternating benchmark rounds. It completed
+  the requested case with state `succeeded`, exit code 0, and no failure
+  category.
+- Correctness: all five trials were bitwise exact under the strict OR rule;
+  `0 / 5,242,880` elements failed, and maximum absolute and relative errors
+  were both zero. This validates the HD8 and non-power-of-two K padding
+  boundary for this exact declared workload.
+- Same-job baseline/candidate medians were
+  `7.275520 / 1.177600 ms`, for `6.178261x` speedup. Raw 100-sample round
+  medians were baseline `7.273472 / 7.277056 / 7.275520 ms` and candidate
+  `1.175552 / 1.180672 / 1.179648 ms`; candidate round spread was only
+  `0.4341%` of the middle round median.
+- Against I03 candidate `1.288192 ms`, candidate latency fell `8.585056%`
+  (equivalently `9.391305%` old/new gain), well beyond the preregistered 1%
+  gate. Baseline drift versus I03 was `-0.147568%`, so the improvement is not
+  explained by whole-job timing movement.
+- Decision: `promote` E01 for integration. This is focused case-11 evidence,
+  not a unified cases-1-13 claim; shared-winner source remains unchanged until
+  the supervisor layers the commit and validates the combined matrix.

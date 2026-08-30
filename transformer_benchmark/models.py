@@ -218,7 +218,17 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
         from .triangular_scores import triangular_causal_score_chunk
 
         seq_len = query.shape[-2]
-        context = torch.empty_like(query) if direct_context_write else None
+        use_hd8_pv_kernel = tuple(query.shape) == (64, 16, 128, 8)
+        if use_hd8_pv_kernel:
+            batch, heads, _, head_dim = query.shape
+            context_sequence_major = torch.empty(
+                (batch, seq_len, heads, head_dim),
+                device=query.device,
+                dtype=query.dtype,
+            )
+            context = context_sequence_major.permute(0, 2, 1, 3)
+        else:
+            context = torch.empty_like(query) if direct_context_write else None
         context_chunks = []
         use_packed_value_pv_kernel = tuple(query.shape) in {
             (64, 4, 128, 32),
@@ -240,7 +250,16 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
             if direct_context_write:
                 if context is None:
                     raise RuntimeError("direct context output was not allocated")
-                if use_packed_value_pv_kernel:
+                if use_hd8_pv_kernel:
+                    from .pv_context import bf16_probability_value_hd8
+
+                    bf16_probability_value_hd8(
+                        prefix_probs_float32,
+                        value,
+                        context,
+                        row_start,
+                    )
+                elif use_packed_value_pv_kernel:
                     from .pv_context import bf16_probability_value
 
                     bf16_probability_value(
@@ -362,6 +381,7 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                 (10000, 128, 128, 4),
                 (64, 128, 32, 4),
                 (64, 128, 128, 2),
+                (64, 128, 128, 16),
                 (64, 1024, 128, 4),
             }
             context = self._chunked_triangular_context(
