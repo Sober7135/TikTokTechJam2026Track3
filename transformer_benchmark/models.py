@@ -175,7 +175,6 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
             in {
                 (16, 128, 128, 4),
                 (64, 32, 128, 4),
-                (64, 128, 32, 4),
                 (64, 128, 128, 1),
                 (64, 128, 128, 2),
                 (64, 128, 128, 4),

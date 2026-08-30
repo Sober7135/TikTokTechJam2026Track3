@@ -1049,3 +1049,55 @@
   evidence.
 - Focused ordinary GPU job, snapshot, deterministic correctness, raw timings,
   and final decision are pending.
+
+### E01 deterministic review
+
+- Focused ordinary job/snapshot:
+  `job-1788132477041-5eab7fb62fad7ec5` /
+  `98f64f040a08baf3304ce3d8ffdcd44e1907e82394b246f0824dfcfedcc75e98`;
+  base commit `e6a177a6a9d9643c75be04f2cc247520c84c60bb`. `job.json`
+  records the exact requested cases 1/4/5/7/9/10/11/12/13, pinned Python
+  environment, terminal state `failed`, exit code 2, and no execution error.
+  The structured result is complete and matrix-subset-complete with top-level
+  `failure_category=correctness` and `correctness_passed=false`.
+- Correctness was isolated to D=32 case 7. Cases 1/4/5/9/10/11/12/13 and all
+  40 of their trials were bitwise exact: `0 / 76,021,760` failed elements and
+  zero maximum absolute/relative error. Case 7 failed four of five trials with
+  per-trial failures `19 / 0 / 3 / 51 / 2`; in aggregate `75 / 1,310,720`
+  elements failed, maximum absolute error was `0.03125`, and maximum relative
+  error was `1.0`. Its trial 2 was bitwise exact. Performance was skipped for
+  case 7, and the failed job supplies no valid broad performance conclusion.
+- Bounded log inspection shows no compile, address, OOM, or runtime exception.
+  The same output-address mapping and D=128 reduction are bitwise exact on all
+  eight sibling cases, while D=32 produces sparse seed-dependent deviations.
+  Evidence therefore points to a shape-specific D=32 Triton-versus-cuBLAS dot
+  reduction mismatch, not a global weight-orientation or output-index bug.
+- Decision: `reject-incorrect` for E01's nine-shape dispatch. Use the sole
+  authorized follow-up only to prune exact tuple `(64,128,32,4)` so case 7
+  regains I06 packed-QKV fallback. Do not change kernel math, output mapping,
+  autotune configurations, or the eight bitwise-exact D=128 routes.
+
+## Cross-case direct-layout QKV E02 - prune D=32 case 7
+
+- Status: final focused follow-up candidate. E02 removes only
+  `(B,S,D,H)=(64,128,32,4)` from the direct-layout allowlist. Case 7 therefore
+  executes the verified I06 `nn.Linear` packed-QKV path; the exact same E01
+  kernel and `[3,B,H,S,HD]` output layout remain active for D=128 cases
+  1/4/5/9/10/11/12/13.
+- Numerical/fallback boundary: the eight selected paths retain E01's measured
+  bitwise-exact FP32-dot+bias then BF16 boundary. The only incorrect D=32 path
+  is removed rather than approximated or retuned. Training, gradients, masks,
+  CPU, non-BF16, noncausal/custom shapes, cases 2/3/6/7/8/14, baseline,
+  interface, weights, QK/softmax/PV, LayerNorm, residuals, FFN, and harness all
+  retain I06 fallback or behavior.
+- Final preregistered job repeats the same nine cases and settings. All nine
+  cases and all 45 trials must pass the strict OR rule before timing is read.
+  Promote the eight-case direct-layout route only if the full nine-case
+  candidate-latency geometric mean is at most `0.796423907 ms` (at least 1%
+  below I06), no case exceeds its I06 median by more than 3%, and round medians
+  are stable. Otherwise retain I06. No further follow-up is permitted.
+- Pre-GPU validation: `git diff --check`; full facade/package/test Python
+  compilation; 23/23 unit tests including the explicit case-7 exclusion; and
+  the prescribed CPU BF16 smoke passed. The smoke was bitwise exact with
+  `0 / 128` failures on the unchanged CPU fallback and is not GPU performance
+  evidence. The final ordinary GPU job is pending.
