@@ -790,7 +790,8 @@
 
 ## Cross-case exact attention E01 - consolidate S=128 QK key tiles
 
-- Status: pre-GPU candidate; no correctness or performance conclusion yet.
+- Status: `retain-best` for the broad six-case dispatch; the one authorized
+  follow-up prunes the same exact tile to the evidenced cases 6/11 only.
 - Historical best: clean I05 implementation/docs head
   `5079e32ee15af761b17f0b9472616fa72425f65b`, unified ordinary job
   `job-1788128838367-68f541c7b93cb504`, snapshot
@@ -837,3 +838,108 @@
   independent key-tile dispatch predicate; and the prescribed CPU BF16 smoke
   all passed. The smoke was bitwise exact (`0 / 128` failed elements) and used
   the unchanged CPU fallback. Its latency is not GPU evidence.
+- Focused ordinary job: `job-1788130791019-9b6ac79507a0cf2c`, immutable
+  snapshot `19a1319275de6e9658e26922cf6ce31e6cbed7f486235851650b1ba318b53d67`,
+  base commit `64014f36a147bae646f46456288855f4100aa256`. The job requested and
+  completed exactly cases 1/5/6/7/10/11 with the pinned Python 3.12.14
+  environment, RTX 4070, PyTorch 2.13.0+cu130/CUDA 13.0, BF16, five accuracy
+  trials, 20 warmups, 100 repeats, and three alternating rounds. `job.json`
+  records state `succeeded`, exit zero, matching snapshot and arguments.
+- Correctness passed before timing was interpreted. All 30 trials were bitwise
+  exact under the strict OR rule: `0 / 846,725,120` failed elements and zero
+  maximum absolute/relative error. Shape mismatch would have failed execution;
+  zero failed elements also proves every compared value finite, and the bounded
+  log contains no dtype-mismatch warning.
+- Same-job baseline/candidate medians and paired speedups were: case 1
+  `1.421311975 / 0.586751997 ms` (`2.422338536x`); case 5
+  `3.223551989 / 1.199103951 ms` (`2.688300697x`); case 6
+  `414.094329834 / 165.875717163 ms` (`2.496413200x`); case 7
+  `1.102848053 / 0.500735998 ms` (`2.202454102x`); case 10
+  `1.110015988 / 0.509952009 ms` (`2.176706767x`); and case 11
+  `7.278592110 / 1.160192013 ms` (`6.273609911x`).
+- Raw-derived baseline round medians were case 1
+  `1.419263959/1.422496021/1.422335982`, case 5
+  `3.220479965/3.225600004/3.224575996`, case 6
+  `413.955078125/414.105590820/414.102081299`, case 7
+  `1.101824045/1.102848053/1.102848053`, case 10
+  `1.104895949/1.111104012/1.111039996`, and case 11
+  `7.276544094/7.280640125/7.280240059 ms`. Candidate round medians were
+  respectively `0.584703982/0.586751997/0.586751997`,
+  `1.195520043/1.199103951/1.200127959`,
+  `165.875717163/165.875717163/165.875381470`,
+  `0.500320002/0.500735998/0.499711990`,
+  `0.508928001/0.512000024/0.508928001`, and
+  `1.130496025/1.162240028/1.159168005 ms`. All 300 samples per side/case
+  remain in the structured result.
+- Candidate-only improvements versus I05 were `-1.595744% / -2.181497% /
+  +0.795650% / -0.410677% / -2.049182% / +2.327585%` for cases
+  1/5/6/7/10/11, positive when faster. The six-case candidate-latency
+  geometric mean regressed `0.505534%`, from `1.795851394` to
+  `1.804930025 ms`; the preregistered broad `>=1%` gate therefore fails.
+- Decision: `retain-best` for E01's broad dispatch despite exact correctness.
+  The result gives precise shape-specific evidence: cases 6/11 both improve,
+  their two-case latency geomean improves `1.564598%`, case-6 rounds are
+  invariant, and every case-11 round remains below I05. Use the sole follow-up
+  to restore the square tile for cases 1/5/7/10 and validate only cases 6/11;
+  do not retune launch parameters or reinterpret the four regressions as noise.
+
+## Cross-case exact attention E02 - prune key consolidation to cases 6/11
+
+- Status: focused `promote`; ready for shared-winner integration and a unified
+  cases-1/13 job, with no further job from this worktree.
+- Change: retain E01's independently tiled 128-column key prefix only for exact
+  query shapes `(10000,4,128,32)` and `(64,16,128,8)`, corresponding to cases
+  6/11. Every sibling S=128 shape returns to `block_key_size =
+  block_query_size`; kernel arithmetic, warp/stage settings, native FP32
+  softmax, PV, projections, residuals, LayerNorm, FFN, baseline, and harness are
+  unchanged. This is evidence-driven dispatch pruning, not a new retune.
+- Numerical and fallback boundary: the two selected shapes retain the E01
+  bitwise-exact complete key tile. Cases 1/5/7/10 and every nonselected shape,
+  mask, dtype, device, mode, S=1024 path, and case 14 regain or retain the I05
+  square-tile fallback.
+- Preregistered follow-up gate: cases 6/11 must both pass all five strict trials
+  before latency is interpreted. Promote only if their candidate-latency
+  geometric mean is at most `13.952120456 ms` (at least 1% below I05
+  `14.093050965 ms`), neither exceeds I05 by over 3%, and round medians remain
+  consistent with a gain. Otherwise retain I05. This is the final GPU job from
+  this worktree.
+- Pre-GPU validation: `git diff --check`, full facade/package/test Python
+  compilation, 20/20 unit tests, and the prescribed CPU BF16 smoke passed. The
+  smoke was bitwise exact (`0 / 128`) on the unchanged CPU fallback and is not
+  GPU performance evidence.
+- Final focused ordinary job: `job-1788131342767-499e46c95514aba1`, immutable
+  snapshot `6dd2cacc9030b96178133f7896d4404809134e44432dcc6ef20f3fe58734aef8`,
+  base commit `f622b61b99a58d5e2ddd02f4a63f8c56511c7eb8`. `job.json` records the
+  exact requested cases 6/11, pinned Python/environment identity, state
+  `succeeded`, exit zero, and no error. The structured result used RTX 4070,
+  Python 3.12.14, PyTorch 2.13.0+cu130/CUDA 13.0, BF16, five trials, 20
+  warmups, 100 repeats, and three alternating rounds.
+- Correctness passed before timing was interpreted. Both cases and all ten
+  trials were bitwise exact under the strict OR rule: `0 / 824,442,880`
+  failed elements and zero maximum absolute/relative error. Shape mismatch
+  would have failed execution; zero failed elements proves compared values
+  finite, and the bounded log contains no dtype-mismatch warning.
+- Same-job baseline/candidate medians and paired speedups: case 6
+  `414.151672363 / 165.683197021 ms` (`2.499660073x`); case 11
+  `7.268352032 / 1.158143997 ms` (`6.275862112x`).
+- Raw-derived baseline round medians were case 6
+  `414.148101807 / 414.151672363 / 414.155258179 ms` and case 11
+  `7.268352032 / 7.268352032 / 7.268352032 ms`. Candidate round medians were
+  case 6 `165.682174683 / 165.683776855 / 165.684219360 ms` and case 11
+  `1.129472017 / 1.160192013 / 1.156095982 ms`. Case 6 is invariant at the
+  displayed precision; case 11's first round is faster, but every round remains
+  below I05 and the aggregate median reproduces E01 within 0.18%.
+- Candidate-only improvements versus I05 were `0.910790%` for case 6 and
+  `2.500000%` for case 11. Their two-case latency geomean fell from
+  `14.093050965` to `13.852256136 ms`, a `1.708607%` improvement that clears
+  the preregistered 1% gate with no target regression. Versus broad E01, case
+  medians improved another `0.116063% / 0.176524%` and their geomean improved
+  `0.146298%`, consistent with ordinary run variation rather than a pruning
+  penalty on the still-selected shapes.
+- Decision: focused `promote` E02. Integrate the net I05-to-E02
+  `triangular_scores.py` and dispatch test diff only: independent query/key
+  tile parameters plus the exact consolidated set `{(10000,4,128,32),
+  (64,16,128,8)}`. Both implementation commits are needed in history because
+  E02 prunes E01; do not integrate the broad six-shape dispatch by itself.
+  Shared-winner source still requires an ordinary unified cases-1/13 job before
+  any matrix-wide performance claim.

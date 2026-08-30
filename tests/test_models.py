@@ -189,16 +189,15 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("(32, 32, 32)", wrapper_source)
         self.assertIn("num_warps=8 if row_count == 128 else 4", wrapper_source)
 
-    def test_s128_score_chunks_consolidate_complete_key_prefix(self) -> None:
+    def test_cases6_and11_consolidate_complete_score_key_prefix(self) -> None:
         from transformer_benchmark.triangular_scores import (
             triangular_causal_score_chunk,
         )
 
         source = inspect.getsource(triangular_causal_score_chunk)
-        self.assertIn(
-            "block_key_size = 128 if seq_len == 128 else block_query_size",
-            source,
-        )
+        self.assertIn("(10000, 4, 128, 32)", source)
+        self.assertIn("(64, 16, 128, 8)", source)
+        self.assertIn("if use_consolidated_key_tile else block_query_size", source)
         self.assertIn("triton.cdiv(row_stop, block_key_size)", source)
         self.assertIn("block_query_size=block_query_size", source)
         self.assertIn("block_key_size=block_key_size", source)

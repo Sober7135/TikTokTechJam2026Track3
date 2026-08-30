@@ -205,12 +205,16 @@ def triangular_causal_score_chunk(
     if row_start % block_query_size or row_stop % block_query_size:
         raise ValueError("score chunk row boundaries must be tile-aligned")
 
-    # Every S=128 prefix keeps its existing native-softmax shape, but one
-    # score program now covers the complete key prefix.  QK reduces only over
-    # head_dim, so widening the independent output-column tile does not split,
-    # pad, or reassociate that reduction.  It avoids reloading each query tile
-    # once per 16/32/64-key output block across cases 1/5/6/7/10/11.
-    block_key_size = 128 if seq_len == 128 else block_query_size
+    # The broad S=128 experiment showed stable end-to-end gains only for the
+    # exact case-6 and case-11 query shapes.  Keep their complete key-prefix
+    # tile while restoring the proven square tile for every sibling shape.
+    # QK still reduces only over head_dim, so this independent output-column
+    # choice does not split, pad, or reassociate the dot reduction.
+    use_consolidated_key_tile = tuple(query.shape) in {
+        (10000, 4, 128, 32),
+        (64, 16, 128, 8),
+    }
+    block_key_size = 128 if use_consolidated_key_tile else block_query_size
 
     scores = torch.empty(
         (batch, heads, row_count, row_stop),
