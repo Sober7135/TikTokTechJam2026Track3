@@ -486,6 +486,33 @@ class BaselineTransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm(d_model)
         self.ffn_in = nn.Linear(d_model, ffn_dim)
         self.ffn_out = nn.Linear(ffn_dim, d_model)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        valid_token_mask: Optional[torch.Tensor],
+        causal: bool,
+    ) -> torch.Tensor:
+        x = x + self.attention(self.norm1(x), valid_token_mask, causal)
+        x = x + self.ffn_out(F.gelu(self.ffn_in(self.norm2(x)), approximate="none"))
+
+        if valid_token_mask is not None:
+            x = x.masked_fill(~valid_token_mask[..., None], 0)
+        return x
+
+
+class UserOptimizedTransformerBlock(BaselineTransformerBlock):
+    """Candidate-only block that leaves the measured baseline path untouched."""
+
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        ffn_dim: int,
+        seq_len: int,
+    ) -> None:
+        super().__init__(d_model, num_heads, ffn_dim)
+        self.attention = UserOptimizedSelfAttention(d_model, num_heads, seq_len)
         self._candidate_cublaslt_linear: Optional[object] = None
 
     def forward(
@@ -497,8 +524,7 @@ class BaselineTransformerBlock(nn.Module):
         x = x + self.attention(self.norm1(x), valid_token_mask, causal)
         hidden = F.gelu(self.ffn_in(self.norm2(x)), approximate="none")
         use_candidate_cublaslt = (
-            isinstance(self.attention, UserOptimizedSelfAttention)
-            and not self.training
+            not self.training
             and torch.is_inference_mode_enabled()
             and not torch.is_grad_enabled()
             and x.device.type == "cuda"
@@ -564,11 +590,20 @@ class UserOptimizedTransformer(BaselineTransformer):
     """
 
     def __init__(self, config: TransformerConfig) -> None:
-        super().__init__(config)
-        for layer in self.layers:
-            layer.attention = UserOptimizedSelfAttention(
-                config.d_model, config.num_heads, config.seq_len
-            )
+        nn.Module.__init__(self)
+        self.config = config
+        self.layers = nn.ModuleList(
+            [
+                UserOptimizedTransformerBlock(
+                    config.d_model,
+                    config.num_heads,
+                    config.ffn_dim,
+                    config.seq_len,
+                )
+                for _ in range(config.num_layers)
+            ]
+        )
+        self.final_norm = nn.LayerNorm(config.d_model)
 
         # Runtime-only CUDA Graph state. It is intentionally not registered as
         # a parameter or buffer, so weight copying and serialization stay
@@ -736,7 +771,7 @@ class UserOptimizedTransformer(BaselineTransformer):
             )
 
         graph.replay()
-        return graph_output
+        return graph_output.clone()
 
     def forward(
         self,
@@ -775,7 +810,7 @@ class UserOptimizedTransformer(BaselineTransformer):
         assert self._cuda_graph is not None
         assert self._cuda_graph_output is not None
         self._cuda_graph.replay()
-        return self._cuda_graph_output
+        return self._cuda_graph_output.clone()
 
 
 def copy_model_weights(

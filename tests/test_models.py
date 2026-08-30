@@ -6,13 +6,24 @@ import torch
 from transformer_benchmark.cases import TransformerConfig
 from transformer_benchmark.correctness import compare_outputs
 from transformer_benchmark.models import (
+    BaselineTransformerBlock,
     BaselineTransformer,
+    UserOptimizedTransformerBlock,
     UserOptimizedTransformer,
     copy_model_weights,
 )
 
 
 class UserOptimizedTransformerTests(unittest.TestCase):
+    def test_candidate_dispatch_does_not_modify_baseline_blocks(self) -> None:
+        config = TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        baseline = BaselineTransformer(config)
+        optimized = UserOptimizedTransformer(config)
+
+        self.assertIs(type(baseline.layers[0]), BaselineTransformerBlock)
+        self.assertNotIn("_candidate_cublaslt_linear", vars(baseline.layers[0]))
+        self.assertIs(type(optimized.layers[0]), UserOptimizedTransformerBlock)
+
     def test_case2_cpu_fallback_preserves_strict_contract(self) -> None:
         config = TransformerConfig(1, 128, 128, 4, 128, 4, True)
         torch.manual_seed(1234)
@@ -84,6 +95,33 @@ class UserOptimizedTransformerTests(unittest.TestCase):
             self.assertTrue(optimized._mask_is_all_true(inference_mask))
             inference_mask[0, -1] = False
             self.assertFalse(optimized._mask_is_all_true(inference_mask))
+
+    def test_cuda_graph_replay_returns_independent_outputs(self) -> None:
+        config = TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        optimized = UserOptimizedTransformer(config).eval()
+        static_output = torch.zeros(1)
+
+        class FakeGraph:
+            def replay(self) -> None:
+                static_output.add_(1)
+
+        optimized._cuda_graph = FakeGraph()
+        optimized._cuda_graph_output = static_output
+        optimized._cuda_graph_signature = ("stable",)
+        optimized._cuda_graph_eligible = lambda _x, _mask: True
+        optimized._mask_is_all_true = lambda _mask: True
+        optimized._cuda_graph_live_signature = lambda _x, _mask, _all_true: (
+            "stable",
+        )
+
+        x = torch.zeros(1, 8, 16)
+        valid_token_mask = torch.ones(1, 8, dtype=torch.bool)
+        first = optimized(x, valid_token_mask)
+        second = optimized(x, valid_token_mask)
+
+        self.assertIsNot(first, second)
+        self.assertEqual(first.item(), 1.0)
+        self.assertEqual(second.item(), 2.0)
 
 
 if __name__ == "__main__":
