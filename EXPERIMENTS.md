@@ -26,7 +26,7 @@
 - Unified result: `job-1788120150037-a85f1703de65273a`, snapshot
   `039a3fa58f3e41839e913c83905cb4024c901b503dbc2f2930cf6f6d54b7500b`,
   succeeded for cases 1-13 with bitwise-exact strict correctness
-  (`0 / 933,232,640` failures). It establishes compliance and does not promote
+  (`0 / 938,885,120` failures). It establishes compliance and does not promote
   a new optimization.
 
 ## I01 - FFN/GELU plus case-6 PV
@@ -177,7 +177,7 @@
   `2d631300de60f00f7a583c85f6dbeb746b0546b2ec28021312d00bd62c341ed8`;
   CUDA BF16 official cases 1-13 on RTX 4070, PyTorch 2.13.0+cu130, CUDA 13.0.
 - Correctness: all 13 requested cases executed and passed strict correctness
-  bitwise exact over five trials; `0 / 933,232,640` failed elements, with zero
+  bitwise exact over five trials; `0 / 938,885,120` failed elements, with zero
   maximum absolute and relative error.
 - Per-case same-job speedups for cases 1-13:
   `1.943977x / 9.666341x / 7.442250x / 3.506063x / 2.195258x /
@@ -328,7 +328,7 @@
   `63cd5873b3bf87a0e1cfd66a5e34c6e43a8bd384e54c3db0806bf88743263557`;
   state `succeeded`, exit zero, official CUDA BF16 cases 1-13 on the RTX 4070.
 - Correctness: all requested cases executed. All five trials per case were
-  bitwise exact: zero failures over `933,232,640` elements and maximum
+  bitwise exact: zero failures over `938,885,120` elements and maximum
   absolute/relative errors both zero under the strict OR rule.
 - Same-job baseline/candidate medians and speedups for cases 1-13 (ms, x):
   `1.421312/0.706560/2.011594`, `0.956928/0.098304/9.734375`,
@@ -604,3 +604,61 @@
   verified improvement for cases 4/12. No follow-up job was submitted and this
   branch does not modify the shared winner; integration still requires a
   separate commit plus unified correctness/performance evidence.
+
+## I04 - integrated focused PV specializations
+
+- Status: promoted as the new shared cases 1-13 winner.
+- Source head under test: `2204240bebaebf26aef5be3f26f5a29c6d519dee`.
+  It layers the independent cases-1/5 HD32 prefix PV, case-11 HD8 PV, and
+  cases-4/12 full HD32 PV commits over I03 while retaining exact-shape dispatch
+  and all declared fallbacks.
+- Integrated static validation: `git diff --check`, full facade/package/test
+  Python compilation, 18/18 standard-library `unittest` tests, and the required
+  CPU BF16 smoke bitwise exact (`0 / 128`). `pytest` was not installed in the
+  pinned environment; CPU timing is not GPU evidence.
+- Unified ordinary job/snapshot:
+  `job-1788127778535-ebd60f321c76182d` /
+  `42556ecebb98432a351e0a1baa5c330b3733aca665483dcd4b01a0b8fd6dfd03`;
+  state `succeeded`, exit zero, official CUDA BF16 cases 1-13 on RTX 4070,
+  Python 3.12.14, PyTorch 2.13.0+cu130, CUDA 13.0, five accuracy trials,
+  20 warmups, 100 repeats, and three rounds.
+- Correctness: all 13 requested cases and all 65 trials executed and were
+  bitwise exact under the strict OR rule: `0 / 938,885,120` failed elements,
+  with zero maximum absolute and relative error.
+- Same-job baseline/candidate medians and speedups for cases 1-13 (ms, x):
+  `1.421504/0.577536/2.461325`, `0.964608/0.098304/9.812500`,
+  `0.970704/0.126976/7.644783`, `0.969728/0.242688/3.995781`,
+  `3.228672/1.172480/2.753712`, `414.119934/167.259651/2.475911`,
+  `1.099776/0.498688/2.205339`, `11.686560/10.891264/1.073021`,
+  `0.882688/0.505344/1.746707`, `1.110016/0.499712/2.221311`,
+  `7.277568/1.188864/6.121447`, `0.967808/0.176128/5.494913`, and
+  `110.904690/35.574783/3.117509`.
+- Candidate round medians for cases 1-13 (three rounds each, ms):
+  `0.575488/0.578560/0.576512`, `0.098304/0.098304/0.098304`,
+  `0.126976/0.126976/0.126976`, `0.241664/0.241664/0.242688`,
+  `1.170944/1.173504/1.173504`, `167.253647/167.263229/167.258629`,
+  `0.498688/0.498688/0.498688`, `10.891264/10.892288/10.891264`,
+  `0.500736/0.509952/0.503808`, `0.498688/0.499712/0.499712`,
+  `1.187840/1.190912/1.189888`, `0.176128/0.176128/0.176128`, and
+  `35.576832/35.572735/35.574272`.
+- Speedup arithmetic uses only paired medians from this same job:
+  per-case `baseline_median / candidate_median`; their equal-case geometric
+  mean is `3.267674802x`. The one-call-total speedup is
+  `555.604255 / 218.812418 = 2.539180634x`.
+- Cross-job I03 comparison uses candidate latency only, not a substituted
+  baseline. Per-case latency improvements are
+  `+18.2609%, 0.0000%, +2.3622%, +8.1395%, +17.1491%, +0.6511%, 0.0000%,
+  +0.3607%, -0.9202%, +0.2587%, +7.7107%, +12.6904%, +0.8193%`.
+  Equal-case candidate-latency geomean improved `5.433887%`; total candidate
+  latency improved `0.882139%` (`220.759826 -> 218.812418 ms`). Case 9 was
+  unchanged in source and its three rounds were noisier; the `0.9202%`
+  cross-job regression is retained as noise evidence rather than attributed to
+  a PV dispatch that cannot reach case 9.
+- Aggregate MFU is `15.830245%`, derived as
+  `2,017,695,105,024 FLOPs / 0.218812418 s / 58.25e12`, using the recorded
+  `L*(8BSD^2 + 4BS^2D + 4BSDF)` convention. This is `+0.139645` percentage
+  points versus I03; MFU is supervisor-derived, not a harness field.
+- Decision: `promote` I04. Unified correctness is exact, every targeted case
+  retains a material candidate improvement versus I03, aggregate geomean,
+  total-call latency, and MFU all improve, and no unsupported-path regression
+  is evidenced by this job.
