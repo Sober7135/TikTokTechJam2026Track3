@@ -1247,3 +1247,50 @@
   assertions, and the prescribed CPU BF16 smoke. The smoke was bitwise exact at
   `0 / 128` failures on fallback and is not GPU performance evidence. Ordinary
   GPU job/snapshot: pending.
+## I07 direct-QKV autotune E01 - sequence-aware launch search
+
+- Status: pre-GPU candidate based on shared winner commit
+  `a4c2d81a6ea5d02d30220c622a5d10c5d14fd0da`. Exact target cases are official
+  CUDA BF16 cases 4/9/11/12/13, the direct-QKV shapes with stable I07 gains.
+- Historical-best evidence: I07 unified job
+  `job-1788133519165-d75dd352756ff0bf`, snapshot
+  `f33228bfb8b8340bae67c1eb2b806bbc8b5af8165364710a1cec9d6f425f5324`,
+  passed all 65 trials bitwise exactly on RTX 4070. Target candidate medians for
+  cases 4/9/11/12/13 are `0.220160 / 0.496640 / 1.077248 / 0.153600 /
+  34.628609 ms`; their equal-case latency geometric mean is
+  `0.910719035 ms`.
+- Bottleneck hypothesis: the existing three-config search lacks a 128-row tile,
+  a 32x128 tile, and lower-warp/deeper-stage alternatives for the fixed
+  `M x 384 x 128` GEMMs. It also keys only on row count, width, and head count,
+  so cases 4 `(B,S)=(16,128)` and 12 `(64,32)` reuse one selected config even
+  though their direct `[3,B,H,S,HD]` store address shapes differ. Add five
+  launch-only candidates covering 32x128, lower-warp 64-wide/128-wide tiles,
+  the established 128x64 shape, and 128x128; include sequence length in the
+  autotune key so those two store geometries are measured independently.
+- Attribution boundary: output width 384 is exactly divisible by both 64 and
+  128 and every target row count is divisible by 32/64/128. Every candidate
+  keeps `block_reduction=32`, the same four increasing K tiles for D=128, the
+  same `tl.dot(..., out_dtype=tl.float32)`, bias addition, explicit BF16
+  rounding, and exact `[P,B,H,S,HD]` output address mapping. Only tile ownership,
+  warp count, software-pipeline depth, and cache-key separation change; QKV
+  math, rounding order, inputs, weights, dispatch allowlist, fallback,
+  attention, FFN, baseline, interface, harness, and thresholds do not.
+- Dispatch/fallback: unchanged from I07. The exact selected D=128 inference
+  shapes use direct QKV; D=32 case 7 and all unsupported training, gradient,
+  mask, device, dtype, layout, or shape conditions retain the established I07
+  fallback.
+- Preregistered focused gate: run exactly cases 4/9/11/12/13 with five accuracy
+  trials, 20 warmups, 100 repeats, and three alternating rounds. Interpret
+  timing only after all 25 trials pass strict
+  `abs_error < 0.002 OR abs_error < 0.02 * abs(reference)` correctness. Promote
+  only if candidate-latency geometric mean is at most `0.903939489 ms`
+  (old/new improvement at least 0.75%) and no case exceeds its I07 median by
+  more than 2% (`0.224563200 / 0.506572800 / 1.098792960 / 0.156672000 /
+  35.321181180 ms`). Otherwise retain I07. At most one follow-up may prune one
+  concretely failing compile/config; it may not alter math or add another
+  optimization category.
+- Pre-GPU validation passed `git diff --check`, full facade/package/test Python
+  compilation, and 24/24 unit tests including exact key/config coverage. The
+  prescribed CPU BF16 smoke was bitwise exact with `0 / 128` failures on the
+  unchanged CPU fallback; it is not GPU performance evidence. Ordinary GPU
+  job/snapshot, correctness, raw timings, and decision are pending.
