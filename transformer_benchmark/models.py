@@ -575,9 +575,39 @@ class UserOptimizedTransformerBlock(BaselineTransformerBlock):
                 self.ffn_out.weight,
                 self.ffn_out.bias,
             )
+            x = x + projection
         else:
-            projection = self.ffn_out(hidden)
-        x = x + projection
+            use_fused_ffn_out = (
+                not self.training
+                and torch.is_inference_mode_enabled()
+                and not torch.is_grad_enabled()
+                and x.device.type == "cuda"
+                and x.dtype == torch.bfloat16
+                and tuple(x.shape)
+                in {
+                    (4, 128, 128),
+                    (16, 128, 128),
+                    (64, 32, 128),
+                    (64, 128, 128),
+                    (128, 128, 128),
+                }
+                and valid_token_mask is None
+                and self.ffn_out.in_features == 128
+                and self.ffn_out.out_features == 128
+                and hidden.is_contiguous()
+                and x.is_contiguous()
+            )
+            if use_fused_ffn_out:
+                from .fused_ffn_out import bf16_linear_residual
+
+                x = bf16_linear_residual(
+                    hidden,
+                    self.ffn_out.weight,
+                    self.ffn_out.bias,
+                    x,
+                )
+            else:
+                x = x + self.ffn_out(hidden)
 
         if valid_token_mask is not None:
             x = x.masked_fill(~valid_token_mask[..., None], 0)

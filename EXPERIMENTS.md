@@ -100,3 +100,67 @@
   its case-11 gain is not a guaranteed unified-matrix gain; the unified result
   is the authoritative integration measurement and the conflict remains
   explicitly recorded.
+## FFN-out E01 - BF16 output projection plus residual fusion
+
+- Hypothesis: official BF16 cases 1/3/4/5/9/10/11/12 all use `D=FFN=128`
+  and materialize the second FFN projection before a separate residual add in
+  each of four layers. A candidate-only Triton epilogue can eliminate that
+  projection tensor's global-memory round trip and the add kernel while
+  preserving the native numerical boundaries. The preregistered promotion
+  gate was strict correctness on every dispatched case, candidate-latency
+  geomean improvement of at least 1%, and no case regression over 0.5%.
+- Diff: `fused_ffn_out.py` performs the 128-wide BF16 projection, explicitly
+  rounds `FP32 dot + bias` to BF16, then adds the BF16 residual in FP32 and
+  stores BF16. Exact-shape dispatch is limited to `(4,128,128)`,
+  `(16,128,128)`, `(64,32,128)`, `(64,128,128)`, and `(128,128,128)`.
+  Case 2 is excluded because its 128 rows do not amortize this custom GEMM;
+  cases 6/8/13/14 and every non-CUDA, non-BF16, masked, training, grad,
+  non-contiguous, and undeclared shape retain the native fallback. Baseline,
+  weights, interface, attention, LayerNorm, masks, and CUDA Graph output clone
+  are unchanged.
+- Pre-GPU checks: `git diff --check`; `py_compile` for `fused_ffn_out.py`,
+  `models.py`, and `test_models.py`; all six model unit tests; and the required
+  CPU BF16 smoke all passed. The smoke was bitwise exact (`0 / 128` failures);
+  its timing is not GPU evidence.
+- Initial job `job-1788123610238-d745d13638fbf43c` used snapshot
+  `f6983b8e54d866d795611139e20e13c60774adc14b985fddb8eaf4e27d8c40e5`
+  but selected the newly created, empty worktree `.venv`. It failed before
+  benchmark import with `ModuleNotFoundError: No module named 'torch'`, wrote
+  no `result.json`, and provides no code correctness or performance evidence.
+- Focused follow-up job `job-1788123704402-1f8147875a951f05` reused the exact
+  same snapshot with the pinned root Python 3.12.14 environment. It ran on an
+  RTX 4070 with PyTorch 2.13.0+cu130, CUDA 13.0, and BF16; requested and
+  completed cases 1/3/4/5/9/10/11/12 with 5 accuracy trials, 20 warmups, 100
+  repeats, and 3 alternating rounds.
+- Correctness: PASS and bitwise exact for all 40 case trials. Across
+  `34,406,400` validated output elements there were zero failures and zero
+  maximum absolute or relative error. This total is the sum of the eight
+  per-case `accuracy.total_elements` fields in the structured result.
+- Current candidate medians and same-job speedups:
+  - case 1: `0.732160 ms`, `1.944056x`;
+  - case 3: `0.128000 ms`, `7.456000x`;
+  - case 4: `0.274432 ms`, `3.469799x`;
+  - case 5: `1.469440 ms`, `2.195819x`;
+  - case 9: `0.525312 ms`, `1.653021x`;
+  - case 10: `0.638976 ms`, `1.732372x`;
+  - case 11: `1.306624 ms`, `5.575235x`;
+  - case 12: `0.210944 ms`, `4.478762x`.
+- Candidate round medians, derived in recorded order from each set of 300 raw
+  samples (three contiguous 100-sample rounds), were: case 1
+  `0.732160 / 0.732160 / 0.733184`; case 3
+  `0.128000 / 0.128000 / 0.128000`; case 4
+  `0.274432 / 0.274432 / 0.274432`; case 5
+  `1.472512 / 1.468416 / 1.461760`; case 9
+  `0.524288 / 0.526336 / 0.524288`; case 10
+  `0.637952 / 0.638976 / 0.638976`; case 11
+  `1.304576 / 1.306624 / 1.308672`; and case 12
+  `0.210944 / 0.210944 / 0.210944 ms`. Full raw samples remain in the job's
+  structured `result.json`.
+- Against canonical shared-winner job
+  `job-1788121832512-dc0a634f40e6600f`, candidate median improvements were
+  3.07693%, 4.00000%, 3.35821%, 0.55750%, 4.67836%, 4.16667%, 2.66457%, and
+  4.36893% for cases 1/3/4/5/9/10/11/12. The equal-case latency geomean
+  improvement was 3.35143%; no case regressed.
+- Decision: `promote`. Correctness passed exactly and both preregistered
+  performance gates were satisfied. This is focused evidence for the complete
+  dispatch scope, not a full official-matrix claim.
