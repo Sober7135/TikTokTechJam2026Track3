@@ -1163,3 +1163,53 @@
   case-7 pruning accompanies E01, then run a new ordinary unified cases-1/13
   job before making a matrix-wide claim. No further job is permitted from this
   worktree.
+
+## Winner integration I07 - direct-layout QKV with D=32 fallback
+
+- Starting shared winner: I06 implementation/docs head `22e686b` / `39e9629`,
+  unified job `job-1788131811786-b0caf8beace8d3d3`.
+- Layered the direct-layout QKV E01, Case-7 dispatch prune E02, and focused
+  result record as unsigned integration commits `efbd73c` / `72d3c1b` /
+  `a0dc957`. The selected CUDA BF16 D=128 shapes project packed QKV directly
+  into one contiguous `[3,B,H,S,HD]` backing; D=32 Case 7 and every unsupported
+  configuration retain I06's native packed-linear fallback.
+- Integrated static validation passed `git diff --check`, full Python
+  compilation, 23/23 unit tests, and the prescribed CPU BF16 smoke bitwise
+  exactly at `0 / 128`. The CPU smoke exercises fallback behavior and is not
+  GPU performance evidence.
+- Unified ordinary job/snapshot:
+  `job-1788133519165-d75dd352756ff0bf` /
+  `f33228bfb8b8340bae67c1eb2b806bbc8b5af8165364710a1cec9d6f425f5324`;
+  base commit `a0dc957411fbab051a796d9112d7d048e9d63f81`, official CUDA BF16
+  cases 1-13, five trials, 20 warmups, 100 repeats, three rounds, state
+  `succeeded`, exit zero.
+- Unified correctness passed before performance interpretation: all 13 cases
+  and all 65 trials were bitwise exact, `0 / 938,885,120` failed elements,
+  with zero maximum absolute and relative error.
+- Same-job baseline/candidate medians and paired speedups for cases 1-13 are:
+  `1.421312/0.582656/2.439367x`, `0.947200/0.098304/9.635416x`,
+  `0.947200/0.126976/7.459678x`, `0.956416/0.220160/4.344186x`,
+  `3.223552/1.179648/2.732639x`, `414.117371/165.891068/2.496321x`,
+  `1.100800/0.498688/2.207392x`, `11.687984/10.892288/1.073051x`,
+  `0.872448/0.496640/1.756701x`, `1.110016/0.512000/2.168000x`,
+  `7.276544/1.077248/6.754753x`, `0.954848/0.153600/6.216458x`, and
+  `110.904320/34.628609/3.202679x`.
+- Paired same-job equal-case speedup geometric mean is `3.334607761x`.
+  One-call-total speedup is
+  `555.520010471 / 216.357884496 = 2.567597718x`.
+- Versus I06 candidate medians, cases 1-13 changed
+  `-1.230238% / -1.041667% / 0.000000% / +6.976750% / -0.781256% /
+  -0.036415% / 0.000000% / 0.000000% / +2.061853% / -2.384381% /
+  +8.079854% / +10.666660% / +2.741217%`. Untargeted Cases 2/3/6/8 and
+  fallback Case 7 retain I06 source behavior; their small cross-job movement is
+  not attributed to direct QKV.
+- All-case candidate-latency geometric mean falls from `1.092235353` to
+  `1.072358624 ms`, an old/new gain of `1.853552%`. Total candidate latency
+  falls from `217.346128307` to `216.357884496 ms`, improving `0.456763%`.
+- Aggregate MFU is `16.009836%`, using `2,017,695,105,024 FLOPs`, the unified
+  candidate median sum, and attached `58.25 TFLOP/s` peak. This remains a
+  supervisor-derived metric under the ledger convention, not a harness field.
+- Decision: `promote` I07 as the shared winner. Full-matrix strict correctness,
+  targeted QKV gains, all-case candidate geomean, total-call latency, paired
+  speedups, and MFU improve. Cases 2/3 remain at or above 7x; most cases remain
+  below the requested 7x-10x objective, so the optimization campaign continues.
