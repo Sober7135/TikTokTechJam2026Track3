@@ -123,14 +123,17 @@ class UserOptimizedTransformerTests(unittest.TestCase):
             "(16, 128, 128, 4)",
             "(64, 32, 128, 4)",
             "(64, 128, 128, 1)",
-            "(64, 128, 128, 2)",
-            "(64, 128, 128, 4)",
             "(64, 128, 128, 16)",
             "(64, 1024, 128, 4)",
-            "(128, 128, 128, 4)",
         ):
             self.assertIn(declared_shape, direct_block)
-        self.assertNotIn("(64, 128, 32, 4)", direct_block)
+        for fallback_shape in (
+            "(64, 128, 32, 4)",
+            "(64, 128, 128, 2)",
+            "(64, 128, 128, 4)",
+            "(128, 128, 128, 4)",
+        ):
+            self.assertNotIn(fallback_shape, direct_block)
         self.assertIn("torch.is_inference_mode_enabled()", direct_block)
         self.assertIn("not torch.is_grad_enabled()", direct_block)
         self.assertIn('x.device.type == "cuda"', direct_block)

@@ -176,11 +176,8 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                 (16, 128, 128, 4),
                 (64, 32, 128, 4),
                 (64, 128, 128, 1),
-                (64, 128, 128, 2),
-                (64, 128, 128, 4),
                 (64, 128, 128, 16),
                 (64, 1024, 128, 4),
-                (128, 128, 128, 4),
             }
             and self.qkv_proj.in_features == self.d_model
             and self.qkv_proj.out_features == 3 * self.d_model

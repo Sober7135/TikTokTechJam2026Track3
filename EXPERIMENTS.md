@@ -1213,3 +1213,37 @@
   targeted QKV gains, all-case candidate geomean, total-call latency, paired
   speedups, and MFU improve. Cases 2/3 remain at or above 7x; most cases remain
   below the requested 7x-10x objective, so the optimization campaign continues.
+
+## I07 direct-layout QKV E03 - prune three regressing shapes
+
+- Status: preregistered candidate. Focused E02 and unified I07 independently
+  showed candidate-latency regressions for Cases 1/5/10: focused
+  `-1.576184% / -0.695053% / -1.795147%`, unified
+  `-1.230238% / -0.781256% / -2.384381%`. E03 removes only their exact
+  `(B,S,D,H)` tuples `(64,128,128,4)`, `(128,128,128,4)`, and
+  `(64,128,128,2)` from direct-layout dispatch.
+- Hypothesis and attribution: those three shapes should recover the I06/I07
+  native packed `nn.Linear` QKV route, eliminating a repeatable direct-layout
+  overhead. The direct kernel remains selected only for the five shapes that
+  improved in both jobs: Cases 4/9/11/12/13, respectively
+  `(16,128,128,4)`, `(64,128,128,1)`, `(64,128,128,16)`,
+  `(64,32,128,4)`, and `(64,1024,128,4)`.
+- Numerical and fallback boundary: no kernel math, accumulation, BF16 rounding,
+  output address mapping, attention, FFN, weights, interface, or harness changes.
+  The five selected direct paths retain I07's bitwise-exact evidence. Cases
+  1/5/10 join Case 7 and all unsupported training, gradient, mask, CPU,
+  non-BF16, noncontiguous, and custom-shape configurations on the already
+  verified native packed-linear fallback. Strict correctness remains elementwise
+  `abs_error < 0.002 OR abs_error < 0.02 * abs(reference)`.
+- Preregistered ordinary GPU gate: repeat official CUDA BF16 Cases
+  1/4/5/7/9/10/11/12/13 with five accuracy trials, 20 warmups, 100 repeats,
+  and three alternating rounds. Require all 45/45 trials correct before reading
+  timing. Promote only if the nine-case candidate-latency geometric mean versus
+  unified I07 improves at least `0.5%`, no case regresses more than `1.5%`, and
+  round medians are stable. One concrete bug follow-up is permitted; otherwise
+  retain I07.
+- Pre-GPU validation passed `git diff --check`, full facade/package/test Python
+  compilation, 23/23 unit tests including explicit inclusion/exclusion dispatch
+  assertions, and the prescribed CPU BF16 smoke. The smoke was bitwise exact at
+  `0 / 128` failures on fallback and is not GPU performance evidence. Ordinary
+  GPU job/snapshot: pending.
