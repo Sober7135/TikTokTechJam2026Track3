@@ -1,0 +1,4 @@
+interface:
+  display_name: "TechJam Kernel Optimization"
+  short_description: "Iterate Transformer kernels with measured GPU feedback"
+  default_prompt: "Use $techjam-kernel-optimization to improve the Transformer candidate through correctness-first measured iterations."
