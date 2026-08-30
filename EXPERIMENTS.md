@@ -164,3 +164,35 @@
 - Decision: `promote`. Correctness passed exactly and both preregistered
   performance gates were satisfied. This is focused evidence for the complete
   dispatch scope, not a full official-matrix claim.
+
+## I02 - unified FFN-out/residual winner
+
+- Integrated commit: `68d4f503d5cd994faf5393ed842e9c5bfed9593f`, preserving the
+  independent FFN-out optimization body and implementation from promoted
+  focused commit `c47546d53eddf853ad35f7065a602f164cf4ed50`.
+- Static integration checks: clean worktree, `git diff --check`, full Python
+  compilation, 11/11 unit tests, and required CPU BF16 smoke passed; CPU smoke
+  was bitwise exact (`0 / 128`) and is not GPU performance evidence.
+- Unified GPU job/snapshot: `job-1788123970631-bca84587ca0e6e73` /
+  `2d631300de60f00f7a583c85f6dbeb746b0546b2ec28021312d00bd62c341ed8`;
+  CUDA BF16 official cases 1-13 on RTX 4070, PyTorch 2.13.0+cu130, CUDA 13.0.
+- Correctness: all 13 requested cases executed and passed strict correctness
+  bitwise exact over five trials; `0 / 933,232,640` failed elements, with zero
+  maximum absolute and relative error.
+- Per-case same-job speedups for cases 1-13:
+  `1.943977x / 9.666341x / 7.442250x / 3.506063x / 2.195258x /
+  2.390277x / 2.203285x / 1.070499x / 1.666667x / 1.734824x /
+  5.540467x / 4.516078x / 3.114174x`.
+- Relative to prior unified winner job
+  `job-1788121832512-dc0a634f40e6600f`, candidate median changes for cases
+  1-13 were `-3.2213% / 0.0000% / -4.0000% / -3.3582% / -0.6276% /
+  +0.0326% / 0.0000% / +0.0375% / -4.6784% / -3.8339% / -1.9455% /
+  -3.8647% / +0.0100%`; negative means faster. Non-dispatch movements are
+  bounded cross-job timing noise.
+- Aggregate result: equal-case speedup geomean `2.964738516x`, one-call-total
+  speedup `2.462056400x` (`558.922880 / 227.014653 ms`), and supervisor-derived
+  aggregate MFU `15.258284896%` using 58.25 TFLOP/s and
+  `F=L*(8BSD^2 + 4BS^2D + 4BSDF)`.
+- Decision: promote as the new shared winner. Versus the prior unified winner,
+  equal-case geomean rose `1.9984%`, total candidate latency fell `0.0289%`,
+  and aggregate MFU rose `0.004407` percentage points.
