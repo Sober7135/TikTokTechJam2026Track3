@@ -313,3 +313,43 @@
   remains `10.1765%` faster. This cross-branch comparison is not combined
   evidence; layer QKV E01 with FFN-out and attention-out, then run one unified
   cases 1-13 validation before shared-source promotion.
+
+## I03 - FFN-out, attention-out, and packed-V integration
+
+- Status: promoted as the new shared cases 1-13 winner.
+- Source head under test: `f157bcd0d1ba470664d1742f94eb5fb62bfc4fe6`.
+  It layers independent FFN-output/residual, attention-output/residual, and
+  packed-strided-V optimizations while retaining every experiment's exact-shape
+  dispatch and native fallback.
+- Static validation: clean diff, full facade/package/test compilation, 14/14
+  unit tests, and the required CPU BF16 smoke bitwise exact (`0 / 128`).
+- Unified ordinary job/snapshot:
+  `job-1788124928473-8295c78ca0925273` /
+  `63cd5873b3bf87a0e1cfd66a5e34c6e43a8bd384e54c3db0806bf88743263557`;
+  state `succeeded`, exit zero, official CUDA BF16 cases 1-13 on the RTX 4070.
+- Correctness: all requested cases executed. All five trials per case were
+  bitwise exact: zero failures over `933,232,640` elements and maximum
+  absolute/relative errors both zero under the strict OR rule.
+- Same-job baseline/candidate medians and speedups for cases 1-13 (ms, x):
+  `1.421312/0.706560/2.011594`, `0.956928/0.098304/9.734375`,
+  `0.957440/0.130048/7.362204`, `0.962560/0.264192/3.643411`,
+  `3.225600/1.415168/2.279305`, `416.669708/168.355843/2.474935`,
+  `1.100800/0.498688/2.207392`, `11.701248/10.930688/1.070495`,
+  `0.872448/0.500736/1.742331`, `1.110224/0.501008/2.215981`,
+  `7.286272/1.288192/5.656200`, `0.958320/0.201728/4.750555`, and
+  `111.706623/35.868671/3.114323`.
+- Aggregate: equal-case speedup geomean `3.081836314x`; one-call-total speedup
+  `2.531844194x` from `558.929484 / 220.759826 ms`; aggregate MFU
+  `15.690600597%` using the recorded FLOP model and 58.25 TFLOP/s peak.
+- Versus the preceding shared winner job
+  `job-1788123970631-bca84587ca0e6e73`, candidate-latency equal-case geomean
+  improved `3.868972%`, total candidate latency improved `2.833318%`, and MFU
+  increased `0.432316` percentage points.
+- Per-case candidate changes versus that preceding winner, positive when
+  faster, were `+3.4783%, 0.0000%, -1.5748%, +3.8760%, +3.7627%, +3.5411%,
+  0.0000%, +0.0234%, +4.9080%, +27.9469%, +2.1463%, +5.0761%, +0.0057%`.
+  Case 3 exposes a small cross-optimization/runtime interaction, but remains
+  `2.3622%` faster than the common implementation parent. This is retained as
+  an explicit audit item while the exact, broad aggregate and total-call gains
+  justify promotion.
+- Decision: `promote` all three implementations as the shared winner.
