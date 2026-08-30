@@ -173,7 +173,9 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
             (4, 128, 128, 4),
             (16, 128, 128, 4),
             (128, 128, 128, 4),
+            (10000, 128, 128, 4),
             (64, 128, 128, 1),
+            (64, 128, 128, 2),
             (64, 32, 128, 4),
         }
         use_packed_views = (
@@ -194,8 +196,6 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
             and x.dtype == torch.bfloat16
             and (batch, seq_len, self.d_model, self.num_heads)
             in {
-                (10000, 128, 128, 4),
-                (64, 128, 128, 2),
                 (64, 128, 128, 16),
                 (64, 1024, 128, 4),
             }
@@ -220,7 +220,10 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
         seq_len = query.shape[-2]
         context = torch.empty_like(query) if direct_context_write else None
         context_chunks = []
-        use_case6_pv_kernel = tuple(query.shape) == (10000, 4, 128, 32)
+        use_packed_value_pv_kernel = tuple(query.shape) in {
+            (10000, 4, 128, 32),
+            (64, 2, 128, 64),
+        }
         for row_start in range(0, seq_len, chunk_size):
             row_stop = min(row_start + chunk_size, seq_len)
             prefix_scores = triangular_causal_score_chunk(
@@ -235,7 +238,7 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
             if direct_context_write:
                 if context is None:
                     raise RuntimeError("direct context output was not allocated")
-                if use_case6_pv_kernel:
+                if use_packed_value_pv_kernel:
                     from .pv_context import bf16_probability_value
 
                     bf16_probability_value(

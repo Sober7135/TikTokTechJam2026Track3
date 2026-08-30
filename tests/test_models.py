@@ -1,4 +1,5 @@
 import copy
+import inspect
 import unittest
 
 import torch
@@ -96,6 +97,26 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertEqual(saved.keys(), actual.keys())
         for key in saved:
             self.assertTrue(torch.equal(saved[key], actual[key]), key)
+
+    def test_cases6_and10_keep_packed_value_views(self) -> None:
+        source = inspect.getsource(
+            UserOptimizedTransformer(TransformerConfig(1, 8, 16, 4, 32, 1, True))
+            .layers[0]
+            .attention._project_qkv
+        )
+        all_view_block, qk_only_block = source.split("use_packed_qk_views", 1)
+        self.assertIn("(10000, 128, 128, 4)", all_view_block)
+        self.assertIn("(64, 128, 128, 2)", all_view_block)
+        self.assertNotIn("(10000, 128, 128, 4)", qk_only_block)
+        self.assertNotIn("(64, 128, 128, 2)", qk_only_block)
+
+    def test_packed_value_kernel_accepts_strided_value_layout(self) -> None:
+        from transformer_benchmark.pv_context import bf16_probability_value
+
+        source = inspect.getsource(bf16_probability_value)
+        self.assertNotIn("value.is_contiguous", source)
+        self.assertIn("value.stride(-1) != 1", source)
+        self.assertIn("(64, 128, 64)", source)
 
     def test_mask_classification_tracks_mutation_and_inference_tensors(self) -> None:
         config = TransformerConfig(1, 128, 128, 4, 128, 4, True)

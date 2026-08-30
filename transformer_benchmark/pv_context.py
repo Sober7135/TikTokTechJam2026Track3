@@ -1,4 +1,4 @@
-"""Exact BF16 probability/value boundary for the case-6 attention path."""
+"""Exact BF16 probability/value boundary for packed-value attention paths."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def bf16_probability_value(
     context: torch.Tensor,
     row_start: int,
 ) -> None:
-    """Write ``BF16(probabilities) @ value`` into a case-6 context slice."""
+    """Write ``BF16(probabilities) @ value`` into a packed-value context slice."""
     if probabilities.device.type != "cuda" or probabilities.dtype != torch.float32:
         raise ValueError("probabilities must be a CUDA FP32 tensor")
     if value.device != probabilities.device or value.dtype != torch.bfloat16:
@@ -89,12 +89,16 @@ def bf16_probability_value(
     if (row_count, key_count, value.shape[-1]) not in {
         (64, 64, 32),
         (64, 128, 32),
+        (64, 64, 64),
+        (64, 128, 64),
     }:
-        raise ValueError("PV kernel is specialized to case-6 prefix chunks")
+        raise ValueError("PV kernel is specialized to case-6/10 prefix chunks")
     if row_start not in (0, 64) or row_start + row_count > context.shape[-2]:
-        raise ValueError("row range is outside the case-6 context")
-    if not probabilities.is_contiguous() or not value.is_contiguous():
-        raise ValueError("PV kernel requires contiguous probabilities and value")
+        raise ValueError("row range is outside the case-6/10 context")
+    if not probabilities.is_contiguous():
+        raise ValueError("PV kernel requires contiguous probabilities")
+    if value.stride(-1) != 1:
+        raise ValueError("PV kernel requires unit-stride value columns")
     if context.stride(-1) != 1:
         raise ValueError("PV kernel requires unit-stride context columns")
 

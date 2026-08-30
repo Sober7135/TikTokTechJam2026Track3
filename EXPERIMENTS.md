@@ -266,3 +266,50 @@
   combination evidence; both commits must be stacked and validated together.
 - Decision: `promote` as an independent optimization winner. No follow-up job
   was submitted from this worktree.
+
+## QKV/layout E01 - consume packed V in cases 6 and 10
+
+- Status: focused `promote`; integration and unified cases 1-13 validation are
+  still required.
+- Parent: audited winner `7c6ab1c8371024c7c4743f9539221ee536464a04`.
+- Targets: official CUDA BF16 cases 6 and 10. The packed QKV projection already
+  kept Q/K as strided views but copied V into a separate contiguous tensor.
+  That copy moved about 312.5 MiB per layer in case 6 and 2 MiB per layer in
+  case 10, or about 1.22 GiB and 8 MiB over four layers.
+- Implementation: retain the projection-backed `[B,H,S,HD]` V view and extend
+  the existing direct-write Triton PV path to consume its explicit strides for
+  the matching 64-row case-10 chunks. The packed `nn.Linear` BF16 output, QK
+  BF16 dot and scale materialization, native FP32 softmax, explicit FP32-to-BF16
+  probability conversion, BF16 PV inputs, FP32 accumulation, and BF16 context
+  output boundaries are unchanged.
+- Dispatch: eval plus inference/no-grad CUDA BF16, causal, no effective token
+  mask, and exact `(B,S,D,H)` shapes `(10000,128,128,4)` or
+  `(64,128,128,2)`. Cases 11/13, training, CPU, other dtype/shape/mask paths,
+  baseline, weights, interface, scoring, graph output ownership, softmax and
+  LayerNorm reductions all retain the prior fallback.
+- Static validation: `git diff --check`, full facade/package/test Python
+  compilation, 13/13 unit tests, and the prescribed CPU BF16 smoke passed; the
+  smoke was bitwise exact (`0 / 128`) and is not GPU performance evidence.
+- Preregistered gate: both cases strict-correct; candidate latency geometric
+  mean at least 1% faster than common-parent job
+  `job-1788121832512-dc0a634f40e6600f`, with neither case more than 0.5%
+  slower.
+- Focused job/snapshot: `job-1788124124492-cc3fdb44ea8ae7dd` /
+  `40dcb9893ed053a11d839fdcf31e67b601930a0fdfa5d34c63a25c7783ad346d`;
+  state `succeeded`, exit 0, RTX 4070, PyTorch 2.13.0+cu130/CUDA 13.0.
+- Correctness: both requested cases executed. Across 10 trials and
+  `824,442,880` elements, strict correctness was bitwise exact: zero failures
+  and zero maximum absolute or relative error.
+- Raw-derived medians: case 6 baseline/candidate
+  `416.684021 / 168.028671 ms` (`2.479838815x`); case 10
+  `1.114112 / 0.547840 ms` (`2.033644898x`). Each side contains 300 timing
+  samples from 3 rounds of 100 repeats after 20 warmups.
+- Common-parent comparison: candidate incremental speedups are `3.708956%`
+  for case 6 and `21.495328%` for case 10; their geometric mean is
+  `12.250406%`, with no regression. Same-job baseline drift versus the parent
+  was only `+0.004424% / +0.272169%`.
+- Decision: `promote`. Relative to newer FFN-out unified winner job
+  `job-1788123970631-bca84587ca0e6e73`, the QKV-only two-case geometric mean
+  remains `10.1765%` faster. This cross-branch comparison is not combined
+  evidence; layer QKV E01 with FFN-out and attention-out, then run one unified
+  cases 1-13 validation before shared-source promotion.
