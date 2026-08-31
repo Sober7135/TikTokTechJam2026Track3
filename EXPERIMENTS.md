@@ -1491,3 +1491,39 @@
   correctness, candidate geomean, total candidate latency, paired speedups,
   and MFU all improve over I07. Cases 2/3 remain at or above 7x; Case 11 stays
   below at `6.756654x`, so the wider target remains incomplete.
+
+## Case-11 HD8 PV E02 - two-warp launch
+
+- Status: pre-GPU candidate from shared I08 winner `a43ec01`; deterministic
+  focused result pending.
+- Target and reference: official Case 11
+  `(B,S,D,H,HD)=(64,128,128,16,8)`. I08 unified job
+  `job-1788135136705-0ad3283d01e0b2e4` measured candidate median
+  `1.077247977 ms`, same-job speedup `6.756654x`, and bitwise-exact strict
+  correctness over all five trials.
+- Hypothesis: each HD8 PV launch uses 1,024 independent batch/head programs,
+  but each program owns only a 16x16 accumulator with eight live output
+  columns. Reducing the launch from four warps to two should lower per-program
+  scheduling and register pressure while retaining ample grid-level
+  parallelism. Pipeline depth remains exactly two stages, so the result is
+  attributable to warp count rather than a compound launch search.
+- Numerical-equivalence boundary: unchanged. Native ATen FP32 softmax remains
+  outside the kernel; probabilities are explicitly rounded to BF16 before
+  `tl.dot`, the dot accumulates in FP32, and context rounds to BF16 before the
+  same masked eight-column store. Tile dimensions, K padding, inputs, weights,
+  reduction order, output layout, eight prefix launches, and dispatch/fallback
+  predicates are unchanged.
+- Dispatch/fallback: unchanged exact Case-11 CUDA BF16 inference path. Case 12
+  and every non-HD8 or unsupported shape continue through the established I08
+  implementation.
+- Preregistered gate: Cases 11 and 12 must both pass five strict correctness
+  trials. Promote only if Case-11 candidate median improves by at least 1.5%
+  versus `1.077247977 ms` (at most `1.061089257 ms`) and guard Case 12 does not
+  regress by more than 1% versus `0.154624000 ms`. At most one follow-up may
+  prune a concrete launch configuration; it may not change kernel math, tiles,
+  dispatch, or fallback.
+- Pre-GPU validation passed `git diff --check`, full facade/package/test Python
+  compilation, and 23/23 unit tests. The prescribed CPU BF16 smoke used the
+  unchanged fallback and passed bitwise exactly with `0 / 128` failures; it is
+  execution/correctness evidence only, not GPU performance evidence. Ordinary
+  focused GPU job identity and result are pending.

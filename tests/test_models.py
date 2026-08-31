@@ -233,6 +233,8 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("(batch, heads, row_count) != (64, 16, 16)", wrapper_source)
         self.assertIn("key_count not in range(16, 129, 16)", wrapper_source)
         self.assertIn("tuple(value.shape) != (64, 16, 128, 8)", wrapper_source)
+        self.assertIn("num_warps=2", wrapper_source)
+        self.assertIn("num_stages=2", wrapper_source)
 
         forward_source = inspect.getsource(attention.forward)
         direct_write_block = forward_source.split("direct_context_write =", 1)[

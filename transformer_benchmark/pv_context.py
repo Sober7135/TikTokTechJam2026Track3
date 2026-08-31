@@ -266,6 +266,10 @@ def bf16_probability_value_hd8(
         row_start=row_start,
         key_count=key_count,
         block_key_count=triton.next_power_of_2(key_count),
-        num_warps=4,
+        # The 16x16 accumulator has only eight live output columns, while the
+        # exact case-11 grid already exposes 1,024 independent batch/head
+        # programs. Two warps reduce per-program scheduling and register
+        # pressure without reducing grid-level parallelism.
+        num_warps=2,
         num_stages=2,
     )
