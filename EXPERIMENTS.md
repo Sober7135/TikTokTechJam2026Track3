@@ -1878,4 +1878,48 @@
   only if the three-case candidate-latency geometric mean improves by at least
   `0.75%` versus I09 and no case regresses by more than `1.5%`; otherwise
   retain I09. At most one evidence-specific follow-up is permitted.
-- Ordinary GPU job/snapshot/result/decision: pending.
+- Ordinary focused job/snapshot:
+  `job-1788138042767-8089c8a3186f6ce5` /
+  `1efdf0152dd9cc2bf5d6b1e4a6686d8a1205d15837a7c694901e281c5b87c7d9`;
+  submitted base commit `42700cf8774f9a148657d3e2e85c1948e278ea86`.
+  `job.json` records exactly Cases 7/9/10, CUDA BF16, the pinned Python
+  executable, terminal state `succeeded`, exit zero, and no error. The
+  structured result is complete and subset-complete on NVIDIA GeForce RTX
+  4070 with Python 3.12.14, PyTorch 2.13.0+cu130, and CUDA 13.0.
+- Correctness passed before timing was interpreted. All requested cases and
+  all 15 trials were bitwise exact under the strict elementwise OR rule:
+  `0 / 11,796,480` failed elements, zero maximum absolute and relative error,
+  expected output shapes/dtypes, finite values, and no failure category.
+- Same-job medians and paired speedups were Case 7
+  `1.096704006 / 0.456703991 ms` (`2.401345354x`), Case 9
+  `0.868351996 / 0.484351993 ms` (`1.792811858x`), and Case 10
+  `1.103871942 / 0.495615989 ms` (`2.227272659x`). Candidate mean/p90/min
+  values were respectively `0.471226030/0.497664005/0.454656005`,
+  `0.486308803/0.493568003/0.480255991`, and
+  `0.496941330/0.496655998/0.492543995 ms`.
+- Raw-derived baseline round medians, each from 100 structured samples, were
+  Case 7 `1.168383956/1.095679998/1.095679998`, Case 9
+  `0.864256024/0.869376004/0.868351996`, and Case 10
+  `1.100800037/1.104895949/1.104895949 ms`. Candidate round medians were Case 7
+  `0.496639997/0.455680013/0.456703991`, Case 9
+  `0.482304007/0.484351993/0.485376000`, and Case 10
+  `0.495615989/0.495615989/0.496639997 ms`.
+- Versus I09 candidate medians, Case 7 improves `9.192830%`; unchanged anchors
+  Cases 9/10 appear `0.634248%/1.033060%` faster but those deltas are runtime
+  observations, not attributable to the Case-7-only dispatch. The three-case
+  candidate geomean falls from `0.495581265` to `0.478608494 ms`, an old/new
+  gain of `3.546274%`, exceeding the preregistered `0.75%` gate with no case
+  regression.
+- Timing caveat: Case 7 is bimodal across rounds. Its first candidate round
+  (`0.496639997 ms`) is only `0.412417%` below the I09 aggregate, while rounds
+  two and three are clearly faster by `9.438202%/9.192830%`. The first
+  baseline round is also elevated (`1.168383956 ms` versus
+  `1.095679998/1.095679998`), which supports a run-regime effect rather than a
+  correctness issue, but the focused aggregate alone cannot prove that the
+  faster regime will persist in a unified matrix run.
+- Decision: focused `promote`; no follow-up is submitted. Strict correctness,
+  aggregate gain, and per-case regression gates pass. Shared-winner promotion
+  still requires integrating only implementation commit `42700cf` and running
+  a new ordinary unified Cases 1-13 job; that job must reproduce Case-7 benefit
+  without a material matrix regression and is the final authority on the
+  bimodal timing caveat.
