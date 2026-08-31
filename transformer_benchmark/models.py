@@ -410,7 +410,7 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                 128,
                 4,
             ):
-                chunk_size = 128
+                chunk_size = 256
             elif (batch, seq_len, self.d_model, self.num_heads) == (
                 10000,
                 128,

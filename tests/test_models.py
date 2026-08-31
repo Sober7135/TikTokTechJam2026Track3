@@ -363,9 +363,9 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("(batch, seq_len, self.d_model, self.num_heads)", chunk_block)
         self.assertIn("64,\n                1024,\n                128,\n                4", chunk_block)
         self.assertIn("10000,\n                128,\n                128,\n                4", chunk_block)
-        self.assertIn("chunk_size = 128", chunk_block)
+        self.assertIn("chunk_size = 256", chunk_block)
         self.assertIn("chunk_size = 32", chunk_block)
-        self.assertNotIn("chunk_size = 256", chunk_block)
+        self.assertNotIn("chunk_size = 128", chunk_block)
 
     def test_cases4_and12_extend_exact_gelu_fusion_by_exact_shape(self) -> None:
         block_source = inspect.getsource(UserOptimizedTransformerBlock.forward)

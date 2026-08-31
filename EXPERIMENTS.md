@@ -2037,3 +2037,9 @@
   the unchanged Cases 6/13 scope. E02 must pass all ten trials; promote only if
   Case 6 retains at least a `0.75%` gain versus I10 and Case 13 does not regress
   above `1.0%` from `34.631680 ms`. This exhausts the route's follow-up.
+- E02 implementation is the evidence-specific one-line dispatch prune: exact
+  Case 13 again selects I10's 256-row chunk, while exact Case 6 remains at 32
+  rows. Kernel math, all launch configurations, native operations, and every
+  other dispatch are byte-identical to E01/I10 as applicable. Diff-check,
+  complete compilation, 26/26 unit tests, and CPU BF16 fallback at `0 / 128`
+  failures pass before the final GPU submission.
