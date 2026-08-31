@@ -393,7 +393,7 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn(".to(tl.bfloat16)", kernel_source)
         self.assertIn("num_warps=4", wrapper_source)
 
-    def test_cases4_and12_extend_exact_gelu_fusion_by_exact_shape(self) -> None:
+    def test_exact_gelu_fusion_includes_declared_d128_ffn128_shapes(self) -> None:
         block_source = inspect.getsource(UserOptimizedTransformerBlock.forward)
         fused_gate = block_source.split("use_fused_ffn_in =", 1)[1].split(
             "if use_fused_ffn_in:", 1
@@ -401,6 +401,8 @@ class UserOptimizedTransformerTests(unittest.TestCase):
 
         self.assertIn("(16, 128, 128)", fused_gate)
         self.assertIn("(64, 32, 128)", fused_gate)
+        self.assertIn("(64, 1024, 128)", fused_gate)
+        self.assertIn("(10000, 128, 128)", fused_gate)
         self.assertIn("x.device.type == \"cuda\"", fused_gate)
         self.assertIn("x.dtype == torch.bfloat16", fused_gate)
         self.assertIn("valid_token_mask is None", fused_gate)

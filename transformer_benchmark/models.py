@@ -716,7 +716,9 @@ class UserOptimizedTransformerBlock(BaselineTransformerBlock):
                 (16, 128, 128),
                 (64, 32, 128),
                 (64, 128, 128),
+                (64, 1024, 128),
                 (128, 128, 128),
+                (10000, 128, 128),
             }
             and valid_token_mask is None
             and self.ffn_in.in_features == 128
