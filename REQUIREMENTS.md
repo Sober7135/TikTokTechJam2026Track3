@@ -102,6 +102,13 @@ The benchmark shall:
 - Exit nonzero on correctness or execution failure and write the corresponding
   machine-readable failure state.
 
+An optional `--profile-candidate` diagnostic may run only inside an ordinary
+`benchmarkctl` job on CUDA with an explicit focused `--official-cases` list.
+It runs after correctness and ordinary steady-state timing, uses fixed bounded
+warmup and replay counts, emits only bounded aggregate events, and must not
+export a trace, stacks, or input shapes. Profiler evidence is diagnostic only;
+it does not replace or alter the benchmark timing verdict.
+
 The declared official matrix contains the 14 cases in
 `transformer_benchmark/cases.py`. The script must attempt the declared shapes
 without shrinking or substituting them. Case 14 (`seq_len=100000`) may exceed

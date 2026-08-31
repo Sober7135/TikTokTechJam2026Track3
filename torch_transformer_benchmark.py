@@ -61,6 +61,14 @@ from transformer_benchmark.runner import (
     write_json_result,
     write_matrix_result,
 )
+from transformer_benchmark.profiling import (
+    PROFILE_CANDIDATE_REPLAYS,
+    PROFILE_MAX_CASES,
+    PROFILE_MAX_EVENTS,
+    PROFILE_WARMUP_REPLAYS,
+    profile_candidate,
+    summarize_profile_events,
+)
 from transformer_benchmark.timing import (
     TimingResult,
     benchmark_models,
@@ -76,6 +84,10 @@ __all__ = [
     "BaselineTransformer",
     "BaselineTransformerBlock",
     "OFFICIAL_TEST_CASES",
+    "PROFILE_CANDIDATE_REPLAYS",
+    "PROFILE_MAX_CASES",
+    "PROFILE_MAX_EVENTS",
+    "PROFILE_WARMUP_REPLAYS",
     "TimingResult",
     "TransformerConfig",
     "UserOptimizedTransformer",
@@ -94,6 +106,7 @@ __all__ = [
     "official_case_result",
     "parse_args",
     "percentile",
+    "profile_candidate",
     "release_case_memory",
     "resolve_device",
     "resolve_dtype",
@@ -102,6 +115,7 @@ __all__ = [
     "run_official_matrix",
     "run_single_case",
     "settings_metadata",
+    "summarize_profile_events",
     "validate_args",
     "warmup_model",
     "write_json_document",

@@ -1669,6 +1669,37 @@ mod tests {
         let summary = read_result_summary(&result_path)?;
         assert_eq!(summary["mode"], "single_case");
         assert_eq!(summary["correctness_passed"], true);
+
+        fs::write(
+            &result_path,
+            serde_json::to_vec(&json!({
+                "schema_version": 2,
+                "mode": "official_matrix",
+                "environment": {},
+                "settings": {
+                    "candidate_profile": {
+                        "warmup_replays": 2,
+                        "profiled_replays": 3,
+                        "event_limit": 30,
+                    }
+                },
+                "requested_case_ids": [13],
+                "complete": true,
+                "all_cases_executed": true,
+                "correctness_passed": true,
+                "failure_category": null,
+                "cases": [{
+                    "case_id": 13,
+                    "candidate_profile": {
+                        "schema_version": 1,
+                        "events": [],
+                    }
+                }],
+            }))?,
+        )?;
+        let profiled_summary = read_result_summary(&result_path)?;
+        assert_eq!(profiled_summary["mode"], "official_matrix");
+        assert_eq!(profiled_summary["correctness_passed"], true);
         Ok(())
     }
 
