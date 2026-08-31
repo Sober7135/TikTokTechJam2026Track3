@@ -1458,3 +1458,36 @@
   prune-only candidate geomean and total candidate latency both improve over
   I07 without a material per-case regression; otherwise retain I07. This is
   the final integration follow-up for the round.
+- Final ordinary job/snapshot:
+  `job-1788135136705-0ad3283d01e0b2e4` /
+  `93c6cebc1cd3d33c1a4219ab19947663cf5ecc174e4cfbb0e59c0aaf1ba65258`;
+  base `089d2b04d5bb893a44b93ea62136cc51d322dca4`, official CUDA BF16 Cases
+  1-13, state succeeded, exit zero.
+- Correctness passed first: all 65 trials were bitwise exact under the strict
+  OR rule, `0 / 938,885,120` failed elements, with zero maximum absolute and
+  relative error.
+- Same-job baseline/candidate medians and paired speedups for Cases 1-13 are:
+  `1.421664/0.575504/2.470294x`, `0.955376/0.097280/9.820888x`,
+  `0.959488/0.126976/7.556452x`, `0.951984/0.220160/4.324055x`,
+  `3.225600/1.174528/2.746295x`, `414.049286/165.839043/2.496694x`,
+  `1.101200/0.498688/2.208194x`, `11.687936/10.892288/1.073047x`,
+  `0.872448/0.487424/1.789916x`, `1.110016/0.499712/2.221311x`,
+  `7.278592/1.077248/6.756654x`, `0.954368/0.154624/6.172185x`, and
+  `110.905342/34.629631/3.202614x`.
+- Paired speedup geomean is `3.355589228x`; one-call-total speedup is
+  `555.473299921 / 216.273105852 = 2.568388232x`.
+- Versus I07 candidate medians, Cases 1-13 changed
+  `+1.242746% / +1.052632% / 0 / 0 / +0.435923% / +0.031371% / 0 /
+  0 / +1.890759% / +2.459023% / 0 / -0.662247% / -0.002952%`.
+  Cases 2/3/6/7/8 are source-identical cross-job observations rather than
+  attributed wins; the changed allowlist routes explain Cases 1/5/10 fallback
+  recovery and retained direct-QKV behavior for Cases 4/9/11/12/13.
+- All-case candidate-latency geomean falls from `1.072358624` to
+  `1.067105806 ms`, an old/new gain of `0.492249%`. Total candidate latency
+  falls from `216.357884496` to `216.273105852 ms`, improving `0.039200%`.
+  Aggregate MFU rises from `16.009836%` to `16.016112%` under the same attached
+  FLOP/peak convention.
+- Decision: promote prune-only I08 as the shared winner. Full-matrix strict
+  correctness, candidate geomean, total candidate latency, paired speedups,
+  and MFU all improve over I07. Cases 2/3 remain at or above 7x; Case 11 stays
+  below at `6.756654x`, so the wider target remains incomplete.
