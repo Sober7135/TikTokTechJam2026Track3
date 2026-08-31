@@ -95,7 +95,6 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
 
         self.qkv_proj = nn.Linear(d_model, 3 * d_model, bias=True)
         self.out_proj = nn.Linear(d_model, d_model, bias=True)
-        self._candidate_cublaslt_out: Optional[object] = None
         causal_mask = None
         if seq_len <= 1024:
             causal_mask = torch.ones((seq_len, seq_len), dtype=torch.bool).triu(
@@ -344,35 +343,6 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
         context: torch.Tensor,
         residual: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        use_case8_cublaslt = (
-            residual is not None
-            and not self.training
-            and torch.is_inference_mode_enabled()
-            and not torch.is_grad_enabled()
-            and context.device.type == "cuda"
-            and context.dtype == torch.bfloat16
-            and tuple(context.shape) == (64, 128, 1024)
-            and tuple(residual.shape) == tuple(context.shape)
-            and residual.device == context.device
-            and residual.dtype == torch.bfloat16
-            and context.is_contiguous()
-            and residual.is_contiguous()
-            and self.out_proj.in_features == 1024
-            and self.out_proj.out_features == 1024
-            and self.out_proj.bias is not None
-        )
-        if use_case8_cublaslt:
-            if self._candidate_cublaslt_out is None:
-                from .cublaslt_linear import CublasLtLinear
-
-                self._candidate_cublaslt_out = CublasLtLinear()
-            projection = self._candidate_cublaslt_out(
-                context,
-                self.out_proj.weight,
-                self.out_proj.bias,
-            )
-            return residual + projection
-
         use_fused_attention_out = (
             residual is not None
             and not self.training
