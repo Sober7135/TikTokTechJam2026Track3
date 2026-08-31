@@ -355,7 +355,9 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                 (16, 128, 128),
                 (64, 32, 128),
                 (64, 128, 128),
+                (64, 1024, 128),
                 (128, 128, 128),
+                (10000, 128, 128),
             }
             and tuple(residual.shape) == tuple(context.shape)
             and residual.device == context.device

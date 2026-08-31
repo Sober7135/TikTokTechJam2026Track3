@@ -9,6 +9,7 @@ from transformer_benchmark.correctness import compare_outputs
 from transformer_benchmark.models import (
     BaselineTransformerBlock,
     BaselineTransformer,
+    UserOptimizedSelfAttention,
     UserOptimizedTransformerBlock,
     UserOptimizedTransformer,
     copy_model_weights,
@@ -419,6 +420,19 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("valid_token_mask is None", fused_gate)
         self.assertIn("hidden.is_contiguous()", fused_gate)
         self.assertIn("x.is_contiguous()", fused_gate)
+
+    def test_attention_out_residual_fusion_includes_large_d128_shapes(self) -> None:
+        attention_source = inspect.getsource(
+            UserOptimizedSelfAttention._project_output_with_residual
+        )
+        fused_gate = attention_source.split("use_fused_attention_out =", 1)[
+            1
+        ].split("if use_fused_attention_out:", 1)[0]
+
+        self.assertIn("(64, 1024, 128)", fused_gate)
+        self.assertIn("(10000, 128, 128)", fused_gate)
+        self.assertIn("context.is_contiguous()", fused_gate)
+        self.assertIn("residual.is_contiguous()", fused_gate)
 
     def test_full_hd32_pv_sequence_major_layout_is_transpose_contiguous(self) -> None:
         for batch, seq_len in ((16, 128), (64, 32)):
