@@ -185,6 +185,26 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("(3, batch, num_heads, sequence_length, head_dimension)", wrapper_source)
         self.assertIn("output.unbind(dim=0)", wrapper_source)
 
+    def test_case11_direct_qkv_uses_auditable_fixed_launch(self) -> None:
+        from transformer_benchmark.direct_qkv import bf16_qkv_direct_layout
+
+        wrapper_source = inspect.getsource(bf16_qkv_direct_layout)
+        fixed_block = wrapper_source.split(
+            "if (batch, sequence_length, width, num_heads) == "
+            "(64, 128, 128, 16):",
+            1,
+        )[1].split("else:", 1)[0]
+
+        self.assertIn("_bf16_qkv_direct_layout_kernel.fn[fixed_grid]", fixed_block)
+        self.assertIn("block_rows=64", fixed_block)
+        self.assertIn("block_columns=128", fixed_block)
+        self.assertIn("block_reduction=32", fixed_block)
+        self.assertIn("num_warps=4", fixed_block)
+        self.assertIn("num_stages=3", fixed_block)
+
+        fallback_block = wrapper_source.split("else:", 1)[1]
+        self.assertIn("_bf16_qkv_direct_layout_kernel[grid]", fallback_block)
+
     def test_packed_value_kernel_accepts_strided_value_layout(self) -> None:
         from transformer_benchmark.pv_context import bf16_probability_value
 

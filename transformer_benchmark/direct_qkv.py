@@ -144,17 +144,43 @@ def bf16_qkv_direct_layout(
         triton.cdiv(row_count, meta["block_rows"]),
         triton.cdiv(packed_width, meta["block_columns"]),
     )
-    _bf16_qkv_direct_layout_kernel[grid](
+    launch_arguments = (
         activation,
         weight,
         bias,
         output,
         row_count,
-        width=width,
-        packed_width=packed_width,
-        sequence_length=sequence_length,
-        head_count=num_heads,
-        head_dimension=head_dimension,
     )
+    shape_arguments = {
+        "width": width,
+        "packed_width": packed_width,
+        "sequence_length": sequence_length,
+        "head_count": num_heads,
+        "head_dimension": head_dimension,
+    }
+    if (batch, sequence_length, width, num_heads) == (64, 128, 128, 16):
+        # Case 11 is the exact M=8192, N=384, K=128 GEMM.  N is divisible by
+        # 128, M still supplies 384 CTAs with a 64x128 tile, and four warps
+        # avoid the eight-warp overhead of the I08 autotuned default.  Bypass
+        # autotuning only for this shape so the chosen launch is auditable and
+        # cannot alter the stable configs used by the other direct-QKV shapes.
+        fixed_grid = (
+            triton.cdiv(row_count, 64),
+            triton.cdiv(packed_width, 128),
+        )
+        _bf16_qkv_direct_layout_kernel.fn[fixed_grid](
+            *launch_arguments,
+            **shape_arguments,
+            block_rows=64,
+            block_columns=128,
+            block_reduction=32,
+            num_warps=4,
+            num_stages=3,
+        )
+    else:
+        _bf16_qkv_direct_layout_kernel[grid](
+            *launch_arguments,
+            **shape_arguments,
+        )
     query, key, value = output.unbind(dim=0)
     return query, key, value

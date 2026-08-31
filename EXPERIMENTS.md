@@ -1562,3 +1562,39 @@
   exactly with `0 / 128` failures. Submit one ordinary shared-queue CUDA BF16
   job with five trials, 20 warmups, 100 repeats, and three rounds. CPU timing
   is not GPU evidence.
+## I08 Case 11 direct-QKV fixed launch E01
+
+- Status: preregistered candidate from shared winner `a43ec01`. The earlier
+  expanded-autotune focused job `job-1788134123272-8f4753aca47ede5c`
+  measured Case 11 at `1.039360046 ms`, a `3.645313%` gain over I07, but the
+  combined unified job retained only `0.190478%` and introduced a stable
+  Case-13 regression. Because the harness does not serialize Triton's selected
+  config, that result was not auditable enough to retain globally.
+- Hypothesis: for the exact Case 11 projection `(B,S,D,H)=(64,128,128,16)`,
+  the GEMM is `M=8192, N=384, K=128`. A fixed `64x128x32`, four-warp,
+  three-stage launch uses exactly three column tiles, exposes 384 CTAs across
+  the large M dimension on the RTX 4070, and avoids the eight-warp scheduling
+  overhead of the original `64x128` config. It is one of the previously
+  correctness-proven expanded-autotune configs, selected here without
+  extending the global search or its cache key.
+- Equivalence boundary: launch shape and scheduling change only. The raw I08
+  Triton kernel retains its four increasing K=32 reductions, FP32 dot
+  accumulation, bias addition, explicit BF16 rounding, and direct contiguous
+  `[3,B,H,S,HD]` address mapping. The direct route's causal/inference/CUDA/
+  BF16/contiguity guards and exact-shape dispatch remain unchanged.
+- Dispatch and fallback: only exact `(64,128,128,16)` bypasses the three-config
+  autotuner and launches the raw kernel with the fixed config. Case 13 and all
+  other supported direct-QKV shapes keep the I08 autotuner; unsupported shapes,
+  masks, training, gradient, dtype, device, and layout conditions retain their
+  existing native packed-linear fallback.
+- Preregistered GPU gate: Cases 11 and 13 must pass all 10 strict trials.
+  Promote only if Case 11 candidate latency improves at least `2%` versus the
+  prune-only I08 reference `1.077248 ms`, Case 13 regression is at most `0.5%`
+  versus `34.629631 ms`, and the three Case-11 round medians preserve the
+  improvement sign. At most one follow-up may replace this fixed config with a
+  different already-tested config if the measured launch misses the gate.
+- Static validation passed `git diff --check`, full Python compilation, 24/24
+  unit tests, and the prescribed CPU BF16 smoke bitwise exactly at `0 / 128`.
+  The CPU smoke exercises the fallback and is not GPU performance evidence.
+  Ordinary job/snapshot, raw timings, and the deterministic decision are
+  pending.
