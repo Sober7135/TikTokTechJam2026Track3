@@ -275,6 +275,21 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
         # of scores so its producer/consumer working set can use Ada's L2.
         # This changes only independent batch scheduling, never a reduction.
         batch_chunk_size = 512 if use_case6_batch_chunks else query.shape[0]
+        if use_case6_batch_chunks:
+            if context is None:
+                raise RuntimeError("Case-6 exact attention requires direct context")
+            from .case6_exact_attention import case6_exact_attention
+
+            for batch_start in range(0, query.shape[0], batch_chunk_size):
+                batch_stop = min(batch_start + batch_chunk_size, query.shape[0])
+                case6_exact_attention(
+                    query[batch_start:batch_stop],
+                    key[batch_start:batch_stop],
+                    value[batch_start:batch_stop],
+                    context[batch_start:batch_stop],
+                    self.scale,
+                )
+            return context
         use_packed_value_pv_kernel = tuple(query.shape) in {
             (16, 4, 128, 32),
             (64, 4, 128, 32),

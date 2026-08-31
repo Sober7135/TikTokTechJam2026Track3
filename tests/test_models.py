@@ -265,6 +265,61 @@ class UserOptimizedTransformerTests(unittest.TestCase):
             score_source,
         )
 
+    def test_case6_exact_attention_preserves_mma_and_bf16_boundaries(self) -> None:
+        attention = UserOptimizedTransformer(
+            TransformerConfig(10000, 128, 128, 4, 128, 4, True)
+        ).layers[0].attention
+        chunk_source = inspect.getsource(attention._chunked_triangular_context)
+        self.assertIn(
+            "from .case6_exact_attention import case6_exact_attention",
+            chunk_source,
+        )
+        self.assertIn("case6_exact_attention(", chunk_source)
+        self.assertIn("return context", chunk_source)
+
+        cuda_source = (
+            Path(__file__).parents[1]
+            / "transformer_benchmark"
+            / "case6_exact_attention.cu"
+        ).read_text()
+        self.assertIn(
+            "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32",
+            cuda_source,
+        )
+        self.assertIn("for (int reduction_start = 0;", cuda_source)
+        self.assertIn("reduction_start += 16", cuda_source)
+        self.assertIn("__float2bfloat16_rn(acc[index])", cuda_source)
+        self.assertIn("__bfloat162float(rounded_dot) * scale", cuda_source)
+        self.assertIn("std::exp(elements[iteration] - maximum)", cuda_source)
+        self.assertIn("__shfl_xor_sync(0xffffffffU, maximum", cuda_source)
+        self.assertIn("__shfl_xor_sync(0xffffffffU, sum", cuda_source)
+        self.assertIn("LAUNCH_CASE6_PREFIX(64, 96, 128)", cuda_source)
+        self.assertIn("LAUNCH_CASE6_PREFIX(96, 128, 128)", cuda_source)
+        query_loader = cuda_source.split("load_query_fragment", maxsplit=1)[1]
+        query_loader = query_loader.split("template <int KeyCount>", maxsplit=1)[0]
+        self.assertIn(
+            "a[1] = pack_bf16(query[query_base + row1 * query_stride_row + column0]",
+            query_loader,
+        )
+        self.assertIn(
+            "a[2] = pack_bf16(query[query_base + row0 * query_stride_row + column1]",
+            query_loader,
+        )
+        probability_loader = cuda_source.split(
+            "load_probability_fragment", maxsplit=1
+        )[1]
+        probability_loader = probability_loader.split(
+            "template <int KeyCount>", maxsplit=1
+        )[0]
+        self.assertIn(
+            "a[1] = pack_bf16(probabilities[row1 * kSequence + column0]",
+            probability_loader,
+        )
+        self.assertIn(
+            "a[2] = pack_bf16(probabilities[row0 * kSequence + column1]",
+            probability_loader,
+        )
+
     def test_case11_dispatches_hd8_pv_into_sequence_major_backing(self) -> None:
         attention = UserOptimizedTransformer(
             TransformerConfig(1, 8, 16, 4, 32, 1, True)
