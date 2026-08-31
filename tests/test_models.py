@@ -206,6 +206,36 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         fallback_block = wrapper_source.split("else:", 1)[1]
         self.assertIn("_bf16_qkv_direct_layout_kernel[grid]", fallback_block)
 
+    def test_cases10_and11_use_wide_attention_output_reduction(self) -> None:
+        from transformer_benchmark.fused_attention_out import (
+            bf16_attention_out_residual,
+        )
+
+        wrapper_source = inspect.getsource(bf16_attention_out_residual)
+        fixed_block = wrapper_source.split(
+            "if (batch, sequence_length, num_heads) in", 1
+        )[1].split("else:", 1)[0]
+        fallback_block = wrapper_source.rsplit("else:", 1)[1]
+
+        self.assertIn("(64, 128, 2)", fixed_block)
+        self.assertIn("(64, 128, 16)", fixed_block)
+        self.assertIn("block_rows=64", fixed_block)
+        self.assertIn("block_columns=64", fixed_block)
+        self.assertIn("block_reduction=64", fixed_block)
+        self.assertIn("num_warps=4", fixed_block)
+        self.assertIn("num_stages=3", fixed_block)
+        self.assertIn(
+            "_bf16_attention_out_residual_kernel[grid]", fallback_block
+        )
+
+        attention = UserOptimizedTransformer(
+            TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        ).layers[0].attention
+        projection_source = inspect.getsource(
+            attention._project_output_with_residual
+        )
+        self.assertIn("self.num_heads", projection_source)
+
     def test_packed_value_kernel_accepts_strided_value_layout(self) -> None:
         from transformer_benchmark.pv_context import bf16_probability_value
 

@@ -377,6 +377,7 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                 self.out_proj.weight,
                 self.out_proj.bias,
                 residual,
+                self.num_heads,
             )
 
         projection = self.out_proj(context)
