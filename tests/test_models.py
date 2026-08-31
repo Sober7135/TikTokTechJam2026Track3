@@ -551,6 +551,36 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("output_float16=output_float16", score_wrapper_source)
         self.assertIn("scores = scores.to(tl.float16)", score_kernel_source)
 
+    def test_case13_exact_attention_preserves_fragment_and_native_boundaries(self) -> None:
+        attention = UserOptimizedTransformer(
+            TransformerConfig(64, 1024, 128, 4, 128, 4, True)
+        ).layers[0].attention
+        chunk_source = inspect.getsource(attention._chunked_triangular_context)
+        self.assertIn(
+            "from .case13_exact_attention import case13_exact_attention",
+            chunk_source,
+        )
+        self.assertIn(
+            "case13_exact_attention(query, key, value, context", chunk_source
+        )
+
+        cuda_source = (
+            Path(__file__).parents[1]
+            / "transformer_benchmark"
+            / "case13_exact_attention.cu"
+        ).read_text()
+        self.assertIn(
+            "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32",
+            cuda_source,
+        )
+        self.assertIn("a[1] = pack_bf16(query", cuda_source)
+        self.assertIn("a[2] = pack_bf16(query", cuda_source)
+        self.assertIn("lane + iteration * 32", cuda_source)
+        self.assertIn("KeyCount == 768 ? 1024 : KeyCount", cuda_source)
+        self.assertIn("std::exp(elements[iteration] - maximum)", cuda_source)
+        self.assertIn("reduction_start += 16", cuda_source)
+        self.assertIn("LAUNCH_CASE13_PREFIX(768, 1024)", cuda_source)
+
     def test_native_softmax_bf16_uses_aten_persistent_template(self) -> None:
         source = (
             Path(__file__).parents[1]

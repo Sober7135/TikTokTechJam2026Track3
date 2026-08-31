@@ -290,6 +290,13 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                     self.scale,
                 )
             return context
+        if use_case13_pv_kernel:
+            if context is None:
+                raise RuntimeError("Case-13 exact attention requires direct context")
+            from .case13_exact_attention import case13_exact_attention
+
+            case13_exact_attention(query, key, value, context, self.scale)
+            return context
         use_packed_value_pv_kernel = tuple(query.shape) in {
             (16, 4, 128, 32),
             (64, 4, 128, 32),
