@@ -469,6 +469,21 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("context.is_contiguous()", fused_gate)
         self.assertIn("residual.is_contiguous()", fused_gate)
 
+    def test_case8_attention_out_uses_cublaslt_before_native_residual(self) -> None:
+        attention_source = inspect.getsource(
+            UserOptimizedSelfAttention._project_output_with_residual
+        )
+        case8_block = attention_source.split("use_case8_cublaslt =", 1)[1].split(
+            "use_fused_attention_out =", 1
+        )[0]
+
+        self.assertIn("tuple(context.shape) == (64, 128, 1024)", case8_block)
+        self.assertIn("CublasLtLinear", case8_block)
+        self.assertIn("self.out_proj.weight", case8_block)
+        self.assertIn("self.out_proj.bias", case8_block)
+        self.assertIn("return residual + projection", case8_block)
+        self.assertNotIn("beta", case8_block)
+
     def test_full_hd32_pv_sequence_major_layout_is_transpose_contiguous(self) -> None:
         for batch, seq_len in ((16, 128), (64, 32)):
             backing = torch.empty(batch, seq_len, 4, 32)
