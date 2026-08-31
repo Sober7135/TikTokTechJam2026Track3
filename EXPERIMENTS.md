@@ -1923,3 +1923,64 @@
   a new ordinary unified Cases 1-13 job; that job must reproduce Case-7 benefit
   without a material matrix regression and is the final authority on the
   bimodal timing caveat.
+
+## Winner integration I10 - Case-7 final-layout HD8 PV
+
+- Integrated source identity: I09 plus the independently attributable Case-7
+  implementation/result commits `cbd17ed` / `f9d9444`. The integration changes
+  no other declared case dispatch. `git diff --check`, complete Python
+  compilation, 25/25 unit tests, and the prescribed CPU BF16 fallback smoke
+  (`0 / 128`) passed before GPU submission; CPU timing is not GPU evidence.
+- Unified deterministic identity: ordinary job
+  `job-1788138587212-0aef822a88ddb071` evaluated immutable snapshot
+  `6d6ffc8a7479137e4d463853472cb31b1704968d63bc8241c427b075ae90f0f4`
+  from the winner worktree. It records exactly official Cases 1-13, CUDA BF16,
+  pinned Python 3.12.14, RTX 4070, PyTorch 2.13.0+cu130, CUDA 13.0, state
+  `succeeded`, exit zero, and no execution error.
+- Correctness passed before timing interpretation. All 13 cases and all 65
+  trials were bitwise exact under the strict OR rule: `0 / 938,885,120` failed
+  elements, zero maximum absolute and relative error, expected shape/dtype,
+  finite outputs, and no failure category. Every case contains 300 baseline
+  and 300 candidate samples from 20 warmups, 100 repeats, and three alternating
+  rounds.
+- Same-job baseline/candidate medians and paired speedups were:
+
+  | Case | Baseline ms | Candidate ms | Speedup |
+  |---:|---:|---:|---:|
+  | 1 | 1.422336 | 0.578560 | 2.458407x |
+  | 2 | 0.956768 | 0.098304 | 9.732747x |
+  | 3 | 0.958368 | 0.126976 | 7.547631x |
+  | 4 | 0.963536 | 0.211968 | 4.545667x |
+  | 5 | 3.223552 | 1.176576 | 2.739774x |
+  | 6 | 414.055420 | 165.841408 | 2.496695x |
+  | 7 | 1.100800 | 0.458752 | 2.399554x |
+  | 8 | 11.687936 | 10.892288 | 1.073047x |
+  | 9 | 0.872448 | 0.495616 | 1.760331x |
+  | 10 | 1.110016 | 0.500736 | 2.216769x |
+  | 11 | 7.276544 | 1.063936 | 6.839269x |
+  | 12 | 0.957440 | 0.153600 | 6.233333x |
+  | 13 | 110.907394 | 34.631680 | 3.202484x |
+
+- The modified Case 7 reproduces the focused benefit in every unified round:
+  candidate round medians are `0.457727998 / 0.459776014 / 0.458752006 ms`
+  versus I09 aggregate `0.498688012 ms`. Its unified median improves
+  `8.705358%` old/new and same-job paired speedup reaches `2.399554x`. This
+  resolves the focused job's slow-first-round caveat.
+- Aggregate metrics keep their denominators separate. Equal-case paired
+  speedup geometric mean is `3.386436689x`. Summed medians are
+  `555.492558271 / 216.230399534 ms`, a one-call-total-latency speedup of
+  `2.568984562x`. Aggregate MFU is `16.019275111%`, using
+  `sum(FLOPs) / sum(candidate median latency) / 58.25e12` and
+  `F=L*(8BSD^2 + 4BS^2D + 4BSDF)`; this is a supervisor-derived convention,
+  not a harness field.
+- Against I09 candidate medians, all-case candidate geomean falls from
+  `1.063487668` to `1.058589026 ms`, an old/new gain of `0.462752%`.
+  Candidate median sum falls from `216.303710565` to `216.230399534 ms`, a
+  gain of `0.033904%`. Unmodified Cases 1/5/9/11/13 show ordinary run-to-run
+  deltas (`-0.337388% / -0.174066% / -1.652893% / -0.192494% /
+  -0.002952%`); these are not attributed to Case 7 and do not offset either
+  aggregate improvement.
+- Decision: promote I10 as the shared winner. Matrix-wide strict correctness
+  passes, the only changed case shows a large stable benefit in all unified
+  rounds, and both candidate-geomean and candidate-sum objectives improve.
+  Cases 2/3 remain above 7x; the broader 7-10x multi-case target remains open.
