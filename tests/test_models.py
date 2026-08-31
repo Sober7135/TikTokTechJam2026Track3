@@ -1,6 +1,7 @@
 import copy
 import inspect
 import unittest
+from pathlib import Path
 
 import torch
 
@@ -475,13 +476,12 @@ class UserOptimizedTransformerTests(unittest.TestCase):
             "output_float16=use_case13_bf16_score_transport",
             chunk_source,
         )
+        self.assertIn("native_softmax_bf16(prefix_scores)", chunk_source)
         self.assertIn(
-            "torch._softmax(prefix_scores, -1, True)",
-            chunk_source,
+            "use_case6_batch_chunks or use_case13_pv_kernel", chunk_source
         )
         self.assertIn(
-            "prefix_probs_float32 = torch.softmax(prefix_scores, dim=-1)",
-            chunk_source,
+            "prefix_probs = torch.softmax(prefix_scores, dim=-1)", chunk_source
         )
 
         from transformer_benchmark.triangular_scores import (
@@ -495,6 +495,22 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("torch.float16 if output_float16", score_wrapper_source)
         self.assertIn("output_float16=output_float16", score_wrapper_source)
         self.assertIn("scores = scores.to(tl.float16)", score_kernel_source)
+
+    def test_native_softmax_bf16_uses_aten_persistent_template(self) -> None:
+        source = (
+            Path(__file__).parents[1]
+            / "transformer_benchmark"
+            / "native_softmax_bf16.cu"
+        ).read_text()
+        self.assertIn("ATen/native/cuda/PersistentSoftmax.cuh", source)
+        self.assertIn(
+            "dispatch_softmax_forward<float, c10::BFloat16, float, false, false>",
+            source,
+        )
+        self.assertIn(
+            "dispatch_softmax_forward<c10::Half, c10::BFloat16, float, false, false>",
+            source,
+        )
 
     def test_exact_gelu_fusion_includes_declared_d128_ffn128_shapes(self) -> None:
         block_source = inspect.getsource(UserOptimizedTransformerBlock.forward)

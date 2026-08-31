@@ -50,9 +50,9 @@ def _bf16_probability_value_kernel(
         + columns[None, :]
     )
 
-    # This conversion is the exact boundary being fused: native ATen softmax
-    # produces FP32 probabilities, while the reference rounds them to BF16
-    # before the probability/value matrix multiplication.
+    # This is the exact reference boundary. Most paths load native-softmax FP32
+    # and round here; Cases 6/13 let the same native template write RNE BF16,
+    # making this conversion a no-op while preserving the following MMA.
     valid_keys = keys < key_count
     probabilities = tl.load(
         probability_ptr + probability_offsets,
@@ -83,8 +83,11 @@ def bf16_probability_value(
     row_start: int,
 ) -> None:
     """Write ``BF16(probabilities) @ value`` into a packed-value context slice."""
-    if probabilities.device.type != "cuda" or probabilities.dtype != torch.float32:
-        raise ValueError("probabilities must be a CUDA FP32 tensor")
+    if probabilities.device.type != "cuda" or probabilities.dtype not in (
+        torch.float32,
+        torch.bfloat16,
+    ):
+        raise ValueError("probabilities must be a CUDA FP32 or BF16 tensor")
     if value.device != probabilities.device or value.dtype != torch.bfloat16:
         raise ValueError("value must be a CUDA BF16 tensor on the same device")
     if context.device != value.device or context.dtype != torch.bfloat16:
@@ -242,8 +245,11 @@ def bf16_probability_value_case13(
     row_start: int,
 ) -> None:
     """Write one Case13 BF16 PV prefix directly into final context backing."""
-    if probabilities.device.type != "cuda" or probabilities.dtype != torch.float32:
-        raise ValueError("case13 probabilities must be a CUDA FP32 tensor")
+    if probabilities.device.type != "cuda" or probabilities.dtype not in (
+        torch.float32,
+        torch.bfloat16,
+    ):
+        raise ValueError("case13 probabilities must be CUDA FP32 or BF16")
     if value.device != probabilities.device or value.dtype != torch.bfloat16:
         raise ValueError("case13 value must be CUDA BF16 on the same device")
     if context.device != value.device or context.dtype != torch.bfloat16:

@@ -255,8 +255,8 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
         use_case13_pv_kernel = tuple(query.shape) == (64, 4, 1024, 32)
         # Case 13's score values have already crossed the reference's BF16 dot
         # and scale boundaries. Keep that compact representation in global
-        # memory and let ATen's native half-to-float softmax widen values as it
-        # loads them, instead of widening every score in the QK store first.
+        # memory; the native persistent softmax widens each FP16 score into its
+        # FP32 accumulators when it loads the prefix.
         use_case13_bf16_score_transport = use_case13_pv_kernel
         if use_hd8_pv_kernel or use_case7_hd8_pv_kernel or use_case13_pv_kernel:
             batch, heads, _, head_dim = query.shape
@@ -302,10 +302,17 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                     output_float16=use_case13_bf16_score_transport,
                     consolidate_key_tile=use_case6_batch_chunks,
                 )
-                if use_case13_bf16_score_transport:
-                    prefix_probs_float32 = torch._softmax(prefix_scores, -1, True)
+                use_native_bf16_probability_transport = (
+                    use_case6_batch_chunks or use_case13_pv_kernel
+                )
+                if use_native_bf16_probability_transport:
+                    from .native_softmax_bf16 import native_softmax_bf16
+
+                    prefix_probs = native_softmax_bf16(prefix_scores)
+                elif use_case13_bf16_score_transport:
+                    prefix_probs = torch._softmax(prefix_scores, -1, True)
                 else:
-                    prefix_probs_float32 = torch.softmax(prefix_scores, dim=-1)
+                    prefix_probs = torch.softmax(prefix_scores, dim=-1)
                 if direct_context_write:
                     if context_batch is None:
                         raise RuntimeError(
@@ -315,7 +322,7 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                         from .pv_context import bf16_probability_value_hd8
 
                         bf16_probability_value_hd8(
-                            prefix_probs_float32,
+                            prefix_probs,
                             value_batch,
                             context_batch,
                             row_start,
@@ -324,7 +331,7 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                         from .pv_context import bf16_probability_value_hd8_case7
 
                         bf16_probability_value_hd8_case7(
-                            prefix_probs_float32,
+                            prefix_probs,
                             value_batch,
                             context_batch,
                             row_start,
@@ -333,7 +340,7 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                         from .pv_context import bf16_probability_value_case13
 
                         bf16_probability_value_case13(
-                            prefix_probs_float32,
+                            prefix_probs,
                             value_batch,
                             context_batch,
                             row_start,
@@ -342,21 +349,21 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                         from .pv_context import bf16_probability_value
 
                         bf16_probability_value(
-                            prefix_probs_float32,
+                            prefix_probs,
                             value_batch,
                             context_batch,
                             row_start,
                         )
                     else:
                         torch.matmul(
-                            prefix_probs_float32.to(dtype=query.dtype),
+                            prefix_probs.to(dtype=query.dtype),
                             value_batch[..., :row_stop, :],
                             out=context_batch[..., row_start:row_stop, :],
                         )
                 else:
                     context_chunks.append(
                         torch.matmul(
-                            prefix_probs_float32.to(dtype=query.dtype),
+                            prefix_probs.to(dtype=query.dtype),
                             value_batch[..., :row_stop, :],
                         )
                     )
