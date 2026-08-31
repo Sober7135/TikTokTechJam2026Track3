@@ -131,12 +131,11 @@ def bf16_attention_out_residual(
         row_count,
     )
     if (batch, sequence_length, num_heads) in {
-        (64, 128, 2),
         (64, 128, 16),
     }:
-        # Cases 10 and 11 share the same M=8192, N=K=128 output projection.
-        # Keep the historical 64x64 output tile and launch metadata while
-        # halving the number of increasing K slices from four to two.
+        # Case 11 benefits from halving the number of increasing K slices from
+        # four to two. Case 10 shares M=N=K but regressed under this launch, so
+        # H=2 deliberately remains on the historical autotuned fallback.
         fixed_grid = (
             triton.cdiv(row_count, 64),
             triton.cdiv(_WIDTH, 64),

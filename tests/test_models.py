@@ -206,7 +206,7 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         fallback_block = wrapper_source.split("else:", 1)[1]
         self.assertIn("_bf16_qkv_direct_layout_kernel[grid]", fallback_block)
 
-    def test_cases10_and11_use_wide_attention_output_reduction(self) -> None:
+    def test_case11_only_uses_wide_attention_output_reduction(self) -> None:
         from transformer_benchmark.fused_attention_out import (
             bf16_attention_out_residual,
         )
@@ -217,8 +217,8 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         )[1].split("else:", 1)[0]
         fallback_block = wrapper_source.rsplit("else:", 1)[1]
 
-        self.assertIn("(64, 128, 2)", fixed_block)
         self.assertIn("(64, 128, 16)", fixed_block)
+        self.assertNotIn("(64, 128, 2)", fixed_block)
         self.assertIn("block_rows=64", fixed_block)
         self.assertIn("block_columns=64", fixed_block)
         self.assertIn("block_reduction=64", fixed_block)
