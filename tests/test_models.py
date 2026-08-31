@@ -236,6 +236,34 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("block_key_count", kernel_source)
         self.assertIn("mask=valid_keys", kernel_source)
 
+    def test_case6_attention_batches_preserve_existing_prefix_kernels(self) -> None:
+        attention = UserOptimizedTransformer(
+            TransformerConfig(10000, 128, 128, 4, 128, 4, True)
+        ).layers[0].attention
+        chunk_source = inspect.getsource(attention._chunked_triangular_context)
+
+        self.assertIn(
+            "use_case6_batch_chunks = tuple(query.shape) == (10000, 4, 128, 32)",
+            chunk_source,
+        )
+        self.assertIn("batch_chunk_size = 512", chunk_source)
+        self.assertIn(
+            "consolidate_key_tile=use_case6_batch_chunks",
+            chunk_source,
+        )
+        self.assertIn("value_batch", chunk_source)
+        self.assertIn("context_batch", chunk_source)
+
+        from transformer_benchmark.triangular_scores import (
+            triangular_causal_score_chunk,
+        )
+
+        score_source = inspect.getsource(triangular_causal_score_chunk)
+        self.assertIn(
+            "use_consolidated_key_tile = consolidate_key_tile or",
+            score_source,
+        )
+
     def test_case11_dispatches_hd8_pv_into_sequence_major_backing(self) -> None:
         attention = UserOptimizedTransformer(
             TransformerConfig(1, 8, 16, 4, 32, 1, True)

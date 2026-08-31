@@ -264,6 +264,12 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
         else:
             context = torch.empty_like(query) if direct_context_write else None
         context_chunks = []
+        use_case6_batch_chunks = tuple(query.shape) == (10000, 4, 128, 32)
+        # Case 6's largest FP32 prefix score tensor is about 625 MiB.  Keep
+        # each existing QK -> native softmax -> BF16 PV chain to about 32 MiB
+        # of scores so its producer/consumer working set can use Ada's L2.
+        # This changes only independent batch scheduling, never a reduction.
+        batch_chunk_size = 512 if use_case6_batch_chunks else query.shape[0]
         use_packed_value_pv_kernel = tuple(query.shape) in {
             (16, 4, 128, 32),
             (64, 4, 128, 32),
@@ -271,69 +277,80 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
             (10000, 4, 128, 32),
             (64, 2, 128, 64),
         }
-        for row_start in range(0, seq_len, chunk_size):
-            row_stop = min(row_start + chunk_size, seq_len)
-            prefix_scores = triangular_causal_score_chunk(
-                query,
-                key,
-                self.scale,
-                row_start,
-                row_stop,
-                output_float32=True,
+        for batch_start in range(0, query.shape[0], batch_chunk_size):
+            batch_stop = min(batch_start + batch_chunk_size, query.shape[0])
+            query_batch = query[batch_start:batch_stop]
+            key_batch = key[batch_start:batch_stop]
+            value_batch = value[batch_start:batch_stop]
+            context_batch = (
+                context[batch_start:batch_stop] if context is not None else None
             )
-            prefix_probs_float32 = torch.softmax(prefix_scores, dim=-1)
-            if direct_context_write:
-                if context is None:
-                    raise RuntimeError("direct context output was not allocated")
-                if use_hd8_pv_kernel:
-                    from .pv_context import bf16_probability_value_hd8
-
-                    bf16_probability_value_hd8(
-                        prefix_probs_float32,
-                        value,
-                        context,
-                        row_start,
-                    )
-                elif use_case7_hd8_pv_kernel:
-                    from .pv_context import bf16_probability_value_hd8_case7
-
-                    bf16_probability_value_hd8_case7(
-                        prefix_probs_float32,
-                        value,
-                        context,
-                        row_start,
-                    )
-                elif use_case13_pv_kernel:
-                    from .pv_context import bf16_probability_value_case13
-
-                    bf16_probability_value_case13(
-                        prefix_probs_float32,
-                        value,
-                        context,
-                        row_start,
-                    )
-                elif use_packed_value_pv_kernel:
-                    from .pv_context import bf16_probability_value
-
-                    bf16_probability_value(
-                        prefix_probs_float32,
-                        value,
-                        context,
-                        row_start,
-                    )
-                else:
-                    torch.matmul(
-                        prefix_probs_float32.to(dtype=query.dtype),
-                        value[..., :row_stop, :],
-                        out=context[..., row_start:row_stop, :],
-                    )
-            else:
-                context_chunks.append(
-                    torch.matmul(
-                        prefix_probs_float32.to(dtype=query.dtype),
-                        value[..., :row_stop, :],
-                    )
+            for row_start in range(0, seq_len, chunk_size):
+                row_stop = min(row_start + chunk_size, seq_len)
+                prefix_scores = triangular_causal_score_chunk(
+                    query_batch,
+                    key_batch,
+                    self.scale,
+                    row_start,
+                    row_stop,
+                    output_float32=True,
+                    consolidate_key_tile=use_case6_batch_chunks,
                 )
+                prefix_probs_float32 = torch.softmax(prefix_scores, dim=-1)
+                if direct_context_write:
+                    if context_batch is None:
+                        raise RuntimeError(
+                            "direct context output was not allocated"
+                        )
+                    if use_hd8_pv_kernel:
+                        from .pv_context import bf16_probability_value_hd8
+
+                        bf16_probability_value_hd8(
+                            prefix_probs_float32,
+                            value_batch,
+                            context_batch,
+                            row_start,
+                        )
+                    elif use_case7_hd8_pv_kernel:
+                        from .pv_context import bf16_probability_value_hd8_case7
+
+                        bf16_probability_value_hd8_case7(
+                            prefix_probs_float32,
+                            value_batch,
+                            context_batch,
+                            row_start,
+                        )
+                    elif use_case13_pv_kernel:
+                        from .pv_context import bf16_probability_value_case13
+
+                        bf16_probability_value_case13(
+                            prefix_probs_float32,
+                            value_batch,
+                            context_batch,
+                            row_start,
+                        )
+                    elif use_packed_value_pv_kernel:
+                        from .pv_context import bf16_probability_value
+
+                        bf16_probability_value(
+                            prefix_probs_float32,
+                            value_batch,
+                            context_batch,
+                            row_start,
+                        )
+                    else:
+                        torch.matmul(
+                            prefix_probs_float32.to(dtype=query.dtype),
+                            value_batch[..., :row_stop, :],
+                            out=context_batch[..., row_start:row_stop, :],
+                        )
+                else:
+                    context_chunks.append(
+                        torch.matmul(
+                            prefix_probs_float32.to(dtype=query.dtype),
+                            value_batch[..., :row_stop, :],
+                        )
+                    )
         if context is not None:
             return context
         return torch.cat(context_chunks, dim=-2)

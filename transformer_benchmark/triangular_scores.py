@@ -175,6 +175,7 @@ def triangular_causal_score_chunk(
     row_start: int,
     row_stop: int,
     output_float32: bool = False,
+    consolidate_key_tile: bool = False,
 ) -> torch.Tensor:
     """Compute a compact causal score block using the exact tiled QK path."""
     if query.shape != key.shape or query.ndim != 4:
@@ -210,7 +211,13 @@ def triangular_causal_score_chunk(
     # Preserve that single-CTA property while avoiding a full 128-column tile
     # for short early prefixes. QK still reduces only over head_dim, so this
     # independent output-column choice does not split or reassociate the dot.
-    use_consolidated_key_tile = tuple(query.shape) in {
+    if consolidate_key_tile and not (
+        heads == 4 and seq_len == 128 and head_dim == 32
+    ):
+        raise ValueError(
+            "consolidated key tiles are specialized to Case 6 batch slices"
+        )
+    use_consolidated_key_tile = consolidate_key_tile or tuple(query.shape) in {
         (10000, 4, 128, 32),
         (64, 16, 128, 8),
     }
