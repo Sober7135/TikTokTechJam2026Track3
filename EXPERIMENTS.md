@@ -2014,3 +2014,26 @@
   neither case regresses above `2.0%`, and round medians are stable. One
   evidence-specific follow-up may restore I10 chunking for one incorrect or
   regressing shape while preserving a proven winner in the other.
+- E01 deterministic result: ordinary job
+  `job-1788146611282-a91535044c5d94ba` evaluated implementation
+  `269d4c836dad9d6e997014178d04314518e0aeca` in immutable snapshot
+  `115f8acceb3b41d6e9feb1e3536f8ed639cd3a96eecf1e25ecc7716f7178cba9`.
+  It requested and executed exactly Cases 6/13 with pinned Python and CUDA
+  BF16 on RTX 4070. `job.json` records terminal failed, exit 2, and no
+  execution error; the structured result is complete.
+- Case 6 passed all five trials bitwise exactly with `0 / 819,200,000`
+  failures. Same-job baseline/candidate medians were
+  `414.206970215 / 164.261886597 ms` (`2.521625550x`). Against I10 candidate
+  `165.841408 ms`, the 32-row chunk improves `0.961587%` old/new. Its three
+  candidate round medians are stable at
+  `164.258308411 / 164.261886597 / 164.263420105 ms`.
+- Case 13 failed all five trials with `37,614 / 41,943,040` strict-rule
+  failures, maximum absolute error `0.046875`, and maximum relative error
+  `3,509,521,408`; no Case-13 performance result exists. Reducing its native
+  softmax and matmul widths does not preserve the strict four-layer output.
+- E01 decision: `reject-incorrect` as a two-shape candidate, with precise
+  shape-specific evidence for the one authorized E02. Restore only Case 13 to
+  I10's 256-row chunk, retain Case 6's correct/stable 32-row chunk, and rerun
+  the unchanged Cases 6/13 scope. E02 must pass all ten trials; promote only if
+  Case 6 retains at least a `0.75%` gain versus I10 and Case 13 does not regress
+  above `1.0%` from `34.631680 ms`. This exhausts the route's follow-up.
