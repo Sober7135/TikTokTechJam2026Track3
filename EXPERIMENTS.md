@@ -1732,3 +1732,42 @@
   row split and Case-12 warp specialization both improve their independently
   dispatched shapes, so the single permitted shape-prune follow-up is not
   submitted.
+
+### E02 deterministic review
+
+- Identity and scope: ordinary job
+  `job-1788136170239-bb023eed0ea6b239` evaluated immutable snapshot
+  `69a922f83b3ac61a74cfaa34b1c48cac9f96381e6d680db757304940f800ffb4`
+  from implementation commit `b964646623e6489ff64ce1f028ca4fc5023141c2`.
+  `job.json` records exactly official Cases 11 and 13, CUDA BF16, pinned
+  Python 3.12.14 and package identity, state `succeeded`, exit zero, and no
+  error. The structured result is complete on RTX 4070 with PyTorch
+  2.13.0+cu130/CUDA 13.0, five accuracy trials, 20 warmups, 100 repeats, and
+  three alternating rounds.
+- Correctness passed before timing interpretation. All 10 trials were bitwise
+  exact under the strict OR rule: `0 / 47,185,920` failed elements with zero
+  maximum absolute and relative error. Both cases report the expected shape,
+  dtype, finite outputs, and no failure category.
+- Same-job baseline/candidate medians and speedups were
+  `7.260159969 / 1.053696036 ms / 6.890184379x` for Case 11 and
+  `110.874626160 / 34.634750366 ms / 3.201253798x` for Case 13. Their
+  equal-case speedup geometric mean was `4.696512420x`; focused median sums
+  were `118.134786129 / 35.688446403 ms` (`3.310168921x`).
+- Against prune-only I08 job `job-1788135136705-0ad3283d01e0b2e4`, Case 11
+  fell from `1.077247977` to `1.053696036 ms`, an old/new improvement of
+  `2.235174%`, passing the `2%` gate. Case 13 rose from `34.629631042` to
+  `34.634750366 ms`, only a `0.014783%` regression, passing the `0.5%` guard.
+- Raw-derived baseline round medians were
+  `7.257423878/7.261200190/7.261184216 ms` for Case 11 and
+  `110.873596191/110.873596191/110.875648499 ms` for Case 13. Candidate
+  round medians were `1.047551990/1.073151946/1.051648021 ms` and
+  `34.634750366/34.635776520/34.634750366 ms`, respectively. Every Case-11
+  round remains faster than the I08 aggregate by
+  `2.834798%/0.381682%/2.434270%`; the `2.443789%` max/min spread makes the
+  magnitude noisy, but the preregistered improvement sign is stable.
+- Decision: focused `promote`. E02 passes strict correctness, the aggregate
+  Case-11 threshold, the Case-13 guard, and the per-round sign requirement.
+  This is the final fixed-config attempt and there is no further follow-up.
+  Integration still requires a new ordinary unified Cases 1-13 job before any
+  matrix-wide promotion claim; focused same-job Case-11 speedup remains
+  `6.890184x`, below the wider 7x target.
