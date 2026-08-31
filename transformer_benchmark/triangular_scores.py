@@ -196,9 +196,9 @@ def triangular_causal_score_chunk(
         block_query_size = row_count
         if block_query_size not in (16, 32, 64):
             raise ValueError("seq_len=128 score chunk rows must be 16, 32, or 64")
-        if head_dim not in (8, 32, 64):
+        if head_dim not in (8, 32, 64, 128):
             raise ValueError(
-                "seq_len=128 score chunks require head_dim in {8, 32, 64}"
+                "seq_len=128 score chunks require head_dim in {8, 32, 64, 128}"
             )
     else:
         raise ValueError("score chunks currently require seq_len=128 or 1024")

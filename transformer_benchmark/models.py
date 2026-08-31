@@ -265,6 +265,7 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
             context = torch.empty_like(query) if direct_context_write else None
         context_chunks = []
         use_packed_value_pv_kernel = tuple(query.shape) in {
+            (16, 4, 128, 32),
             (64, 4, 128, 32),
             (128, 4, 128, 32),
             (10000, 4, 128, 32),
@@ -405,9 +406,11 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
             and (batch, seq_len, self.d_model, self.num_heads)
             in {
                 (64, 128, 128, 4),
+                (16, 128, 128, 4),
                 (128, 128, 128, 4),
                 (10000, 128, 128, 4),
                 (64, 128, 32, 4),
+                (64, 128, 128, 1),
                 (64, 128, 128, 2),
                 (64, 128, 128, 16),
                 (64, 1024, 128, 4),
@@ -446,9 +449,11 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                 self.num_heads,
             ) in {
                 (64, 128, 128, 4),
+                (16, 128, 128, 4),
                 (128, 128, 128, 4),
                 (10000, 128, 128, 4),
                 (64, 128, 32, 4),
+                (64, 128, 128, 1),
                 (64, 128, 128, 2),
                 (64, 128, 128, 16),
                 (64, 1024, 128, 4),

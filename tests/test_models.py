@@ -374,6 +374,34 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("chunk_size = 32", chunk_block)
         self.assertNotIn("chunk_size = 128", chunk_block)
 
+    def test_cases4_and9_use_prefix_attention_with_exact_boundaries(self) -> None:
+        attention = UserOptimizedTransformer(
+            TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        ).layers[0].attention
+        forward_source = inspect.getsource(attention.forward)
+        chunk_gate = forward_source.split(
+            "use_chunked_triangular_attention =", 1
+        )[1].split("if use_chunked_triangular_attention:", 1)[0]
+        direct_gate = forward_source.split("direct_context_write =", 1)[1].split(
+            "context = self._chunked_triangular_context", 1
+        )[0]
+        chunk_source = inspect.getsource(attention._chunked_triangular_context)
+
+        self.assertIn("(16, 128, 128, 4)", chunk_gate)
+        self.assertIn("(64, 128, 128, 1)", chunk_gate)
+        self.assertIn("(16, 128, 128, 4)", direct_gate)
+        self.assertIn("(64, 128, 128, 1)", direct_gate)
+        self.assertIn("(16, 4, 128, 32)", chunk_source)
+
+        from transformer_benchmark.triangular_scores import (
+            triangular_causal_score_chunk,
+        )
+
+        score_source = inspect.getsource(triangular_causal_score_chunk)
+        self.assertIn("head_dim not in (8, 32, 64, 128)", score_source)
+        self.assertIn("block_query_size = row_count", score_source)
+        self.assertIn("block_key_size = block_query_size", score_source)
+
     def test_case13_dispatches_tiled_k_direct_pv(self) -> None:
         attention = UserOptimizedTransformer(
             TransformerConfig(1, 8, 16, 4, 32, 1, True)
