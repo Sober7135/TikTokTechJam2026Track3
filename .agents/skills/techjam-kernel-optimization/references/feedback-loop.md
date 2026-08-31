@@ -14,6 +14,8 @@ Give the optimizer only the information that changes its decisions:
 - exact GPU, architecture, dtype, PyTorch/CUDA versions, and dependency limits;
 - comparable baseline and current-best snapshot identifiers;
 - raw per-case timing summaries and samples already measured on that profile;
+- measured bottleneck share, the removable fraction, and the predicted
+  end-to-end case-latency improvement;
 - allowed implementation freedom and an explicit experiment budget, if one was
   supplied.
 
@@ -47,6 +49,10 @@ Performance evidence, only when correct:
 Validated profiler evidence, when available:
 <metrics tied to the same implementation, shape, dtype, and GPU>
 
+Investment gate:
+<bottleneck latency share * removable fraction = predicted case improvement;
+normally 5-10%, and never start below 2%>
+
 Decision requested:
 Choose one next hypothesis, its expected measurable effect, and rollback rule.
 Do not repeat a disproven route without new evidence.
@@ -73,6 +79,18 @@ Classify every evaluated candidate as one of:
 Record the snapshot digest, exact arguments, environment identity, raw samples,
 decision, and reason. A rerun for timing noise is another ordinary job, not a
 special verification job.
+
+For this campaign, apply the promotion thresholds after correctness:
+
+- focused gain below 3%: stop;
+- 3--5%: continue only for a multi-case owner with stable negative controls;
+- above 5%: advance to unified Cases 1--13;
+- unified candidate-latency geometric-mean improvement below 1% versus the
+  fixed historical best: do not enter the winner.
+
+Report paired speedup as an attribution check, but calculate the primary
+promotion aggregate from candidate latencies so baseline timing drift cannot
+manufacture a gain.
 
 ## Profiling gate
 
