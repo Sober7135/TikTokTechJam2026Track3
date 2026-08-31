@@ -1527,3 +1527,38 @@
   unchanged fallback and passed bitwise exactly with `0 / 128` failures; it is
   execution/correctness evidence only, not GPU performance evidence. Ordinary
   focused GPU job identity and result are pending.
+## Cases-4/12 full HD32 PV launch E01 - row split and warp specialization
+
+- Status: pre-GPU candidate from I08 implementation `089d2b0`; the I08 audit
+  head is `a43ec01`. The comparable unified job is
+  `job-1788135136705-0ad3283d01e0b2e4`, snapshot
+  `93c6cebc1cd3d33c1a4219ab19947663cf5ecc174e4cfbb0e59c0aaf1ba65258`.
+  Its candidate medians are `0.220159993 / 0.154624000 ms` for Cases 4/12.
+- Hypothesis: Case 4 launches only 64 batch/head programs and its monolithic
+  128-row program carries a 128x32 FP32 accumulator across eight warps. Since
+  output rows are independent, two 64-row/four-warp programs can expose 128
+  blocks and reduce per-block accumulator/shared-memory pressure without
+  splitting the K=128 reduction. Case 12 already has 256 batch/head programs;
+  its 32x32 accumulator should need only two warps instead of four.
+- Implementation and attribution: only the exact full-HD32 call is recognized
+  inside `pv_context.py`. Case 4 splits M=128 into two disjoint M=64 programs,
+  each with four warps and two stages. Case 12 retains one M=32 program but
+  uses two warps and two stages. Prefix row-32/64 calls, HD8 PV, and every other
+  tile keep the historical launch configuration.
+- Numerical-equivalence boundary: each Case-4 program still loads all K=128
+  FP32 probabilities, explicitly rounds them to BF16, performs one unsplit
+  BF16 dot with FP32 accumulation, rounds context to BF16, and writes a unique
+  64-row region. Case 12 changes only warp distribution. Native FP32 softmax,
+  BF16 probability materialization, FP32 dot accumulation, BF16 context,
+  layout, dispatch, fallback, baseline, weights, and public interface are
+  unchanged.
+- Preregistered gate: both focused Cases 4/12 must complete all 10 strict
+  trials under `abs<0.002 OR rel<0.02`. Against I08 candidate medians, the
+  equal-case candidate-latency geomean must improve at least `0.75%`, and no
+  case may regress more than `1.5%`. At most one concrete shape-prune follow-up
+  may remove one regressing shape; no other configuration search is allowed.
+- Local checks: `git diff --check`, full facade/package/test Python compilation,
+  and 23/23 unit tests passed. The prescribed CPU BF16 smoke passed bitwise
+  exactly with `0 / 128` failures. Submit one ordinary shared-queue CUDA BF16
+  job with five trials, 20 warmups, 100 repeats, and three rounds. CPU timing
+  is not GPU evidence.

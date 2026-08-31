@@ -24,6 +24,7 @@ def _bf16_probability_value_kernel(
     heads: tl.constexpr,
     row_start: tl.constexpr,
     row_count: tl.constexpr,
+    block_row_count: tl.constexpr,
     key_count: tl.constexpr,
     block_key_count: tl.constexpr,
     head_dim: tl.constexpr,
@@ -32,7 +33,8 @@ def _bf16_probability_value_kernel(
     batch_index = block_bh // heads
     head_index = block_bh % heads
 
-    rows = tl.arange(0, row_count)
+    block_row = tl.program_id(1)
+    rows = block_row * block_row_count + tl.arange(0, block_row_count)
     keys = tl.arange(0, block_key_count)
     columns = tl.arange(0, head_dim)
     probability_offsets = (
@@ -123,7 +125,31 @@ def bf16_probability_value(
     if context.stride(-1) != 1:
         raise ValueError("PV kernel requires unit-stride context columns")
 
-    _bf16_probability_value_kernel[(batch * heads,)](
+    is_full_hd32_tile = (
+        row_start == 0
+        and row_count == key_count == context.shape[-2]
+        and value.shape[-1] == 32
+    )
+    if is_full_hd32_tile and row_count == 128:
+        # Case 4 has only 64 batch/head tiles. Split its independent output
+        # rows into two proven 64-row PV programs so Ada can schedule 128
+        # smaller four-warp blocks while each block still performs the full
+        # K=128 reduction in one tl.dot.
+        block_row_count = 64
+        num_warps = 4
+    elif is_full_hd32_tile and row_count == 32:
+        # Case 12 already exposes 256 independent batch/head tiles. Its
+        # 32x32 accumulator needs only two warps; prefix row-32 calls for
+        # cases 1/5 retain the historical four-warp launch below.
+        block_row_count = 32
+        num_warps = 2
+    else:
+        block_row_count = row_count
+        num_warps = 8 if row_count == 128 else 4
+
+    _bf16_probability_value_kernel[
+        (batch * heads, triton.cdiv(row_count, block_row_count))
+    ](
         probabilities,
         value,
         context,
@@ -139,13 +165,11 @@ def bf16_probability_value(
         heads=heads,
         row_start=row_start,
         row_count=row_count,
+        block_row_count=block_row_count,
         key_count=key_count,
         block_key_count=triton.next_power_of_2(key_count),
         head_dim=value.shape[-1],
-        # The full case-4 tile has a 128x32 FP32 accumulator. Eight warps keep
-        # its accumulator distribution comparable to the proven 64x32 tile;
-        # the 32/64-row variants retain the prior four-warp launch.
-        num_warps=8 if row_count == 128 else 4,
+        num_warps=num_warps,
         num_stages=2,
     )
 

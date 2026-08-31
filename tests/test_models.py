@@ -264,7 +264,13 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         wrapper_source = inspect.getsource(bf16_probability_value)
         self.assertIn("(128, 128, 32)", wrapper_source)
         self.assertIn("(32, 32, 32)", wrapper_source)
-        self.assertIn("num_warps=8 if row_count == 128 else 4", wrapper_source)
+        self.assertIn("is_full_hd32_tile", wrapper_source)
+        self.assertIn("block_row_count = 64", wrapper_source)
+        self.assertIn("num_warps = 2", wrapper_source)
+        self.assertIn(
+            "triton.cdiv(row_count, block_row_count)", wrapper_source
+        )
+        self.assertIn("num_warps = 8 if row_count == 128 else 4", wrapper_source)
 
     def test_cases6_and11_consolidate_complete_score_key_prefix(self) -> None:
         from transformer_benchmark.triangular_scores import (
