@@ -351,6 +351,22 @@ class UserOptimizedTransformerTests(unittest.TestCase):
             source,
         )
 
+    def test_cases6_and13_reduce_masked_future_chunk_geometry(self) -> None:
+        attention = UserOptimizedTransformer(
+            TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        ).layers[0].attention
+        source = inspect.getsource(attention.forward)
+        chunk_block = source.split(
+            "if use_chunked_triangular_attention:", 1
+        )[1].split("direct_context_write =", 1)[0]
+
+        self.assertIn("(batch, seq_len, self.d_model, self.num_heads)", chunk_block)
+        self.assertIn("64,\n                1024,\n                128,\n                4", chunk_block)
+        self.assertIn("10000,\n                128,\n                128,\n                4", chunk_block)
+        self.assertIn("chunk_size = 128", chunk_block)
+        self.assertIn("chunk_size = 32", chunk_block)
+        self.assertNotIn("chunk_size = 256", chunk_block)
+
     def test_cases4_and12_extend_exact_gelu_fusion_by_exact_shape(self) -> None:
         block_source = inspect.getsource(UserOptimizedTransformerBlock.forward)
         fused_gate = block_source.split("use_fused_ffn_in =", 1)[1].split(

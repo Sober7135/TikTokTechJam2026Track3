@@ -1984,3 +1984,33 @@
   passes, the only changed case shows a large stable benefit in all unified
   rounds, and both candidate-geomean and candidate-sum objectives improve.
   Cases 2/3 remain above 7x; the broader 7-10x multi-case target remains open.
+
+## I10 Cases-6/13 reduced masked-future chunk geometry E01
+
+- Targets: compute-heavy CUDA BF16 Cases 6/13. I10 unified candidate medians
+  are `165.841408 / 34.631680 ms`, together accounting for about 92.7% of the
+  Cases 1-13 candidate median sum.
+- Hypothesis: the compact causal path computes every key through the end of a
+  chunk, then masks future positions inside that chunk. Case 6's two 64-row
+  chunks materialize 12,288 score/probability positions per batch/head; four
+  32-row chunks materialize 10,240, a 16.7% reduction. Case 13's four 256-row
+  chunks materialize 655,360 positions; eight 128-row chunks materialize
+  589,824, a 10% reduction. These large grids should amortize the extra
+  launches while reducing QK, native softmax, probability traffic, and PV work.
+- Change and scope: select 32 rows only for exact Case 6
+  `(10000,128,128,H4)` and 128 rows only for exact Case 13
+  `(64,1024,128,H4)`. Every other declared/custom shape retains I10 chunking.
+- Numerical boundary: QKV, triangular QK math, BF16 score/scale boundaries,
+  causal predicate, native FP32 softmax, BF16 probability boundary, BF16 V,
+  FP32 PV accumulation, BF16 context, output layout, projections, FFN, weights,
+  and public interface are unchanged. Removing masked `-inf` columns and zero
+  PV terms changes native reduction widths, so strict correctness remains the
+  first empirical gate despite algebraic equivalence.
+- GPU plan: after static and CPU fallback validation, submit one ordinary CUDA
+  BF16 Cases 6/13 job with five trials, 20 warmups, 100 repeats, and three
+  rounds. Interpret performance only if all ten trials pass strict
+  `abs_error < 0.002 OR relative_error < 0.02`. Promote focused E01 if the
+  two-case candidate-latency geomean improves at least `1.0%` versus I10,
+  neither case regresses above `2.0%`, and round medians are stable. One
+  evidence-specific follow-up may restore I10 chunking for one incorrect or
+  regressing shape while preserving a proven winner in the other.

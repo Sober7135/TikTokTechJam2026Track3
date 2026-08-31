@@ -404,8 +404,20 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
             and valid_token_mask is None
         )
         if use_chunked_triangular_attention:
-            if seq_len == 1024:
-                chunk_size = 256
+            if (batch, seq_len, self.d_model, self.num_heads) == (
+                64,
+                1024,
+                128,
+                4,
+            ):
+                chunk_size = 128
+            elif (batch, seq_len, self.d_model, self.num_heads) == (
+                10000,
+                128,
+                128,
+                4,
+            ):
+                chunk_size = 32
             elif (batch, self.d_model, self.num_heads) == (64, 128, 16):
                 chunk_size = 16
             elif (batch, self.d_model, self.num_heads) in {
