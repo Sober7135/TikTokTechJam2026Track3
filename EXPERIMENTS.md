@@ -1494,8 +1494,8 @@
 
 ## Case-11 HD8 PV E02 - two-warp launch
 
-- Status: pre-GPU candidate from shared I08 winner `a43ec01`; deterministic
-  focused result pending.
+- Status: focused `promote` from shared I08 winner `a43ec01`; integration and
+  unified Cases 1-13 validation remain the supervisor's responsibility.
 - Target and reference: official Case 11
   `(B,S,D,H,HD)=(64,128,128,16,8)`. I08 unified job
   `job-1788135136705-0ad3283d01e0b2e4` measured candidate median
@@ -1664,3 +1664,36 @@
   unit tests, and the prescribed CPU BF16 fallback smoke bitwise exactly at
   `0 / 128`. This is not GPU performance evidence. Ordinary benchmark
   evidence is pending.
+## Case-11 HD8 PV E02 deterministic review
+
+- Deterministic identity and scope: ordinary job
+  `job-1788135643098-82e65f3390f8207e`, immutable snapshot
+  `f24b727a3f7511eba9e59ab11d59acdd5382ac152d4a3faa83e3b9048897c4bc`,
+  base optimization commit `b87e6e69f83d5e675428a66b2d06e98f5c8be84a`.
+  `job.json` records exactly official Cases 11/12, CUDA BF16, five accuracy
+  trials, 20 warmups, 100 repeats, and three alternating rounds; it completed
+  with state `succeeded`, exit zero, and no error using pinned Python 3.12.14.
+  The structured result identifies RTX 4070, PyTorch 2.13.0+cu130, and CUDA
+  13.0.
+- Correctness passed before timing interpretation. Both requested cases and all
+  10 trials were bitwise exact under strict
+  `abs_error < 0.002 OR abs_error < 0.02 * abs(reference)` correctness:
+  `0 / 6,553,600` failed elements, with zero maximum absolute and relative
+  error. Both cases report complete 300-sample baseline and candidate timing.
+- Case 11 same-job baseline/candidate medians were
+  `7.262207985 / 1.047551990 ms`, a `6.932551374x` speedup. Against I08
+  candidate `1.077247977 ms`, the old/new gain is `2.834798%` (latency
+  reduction `2.756653%`), exceeding the preregistered 1.5% gate. Baseline
+  round medians were `7.260159969 / 7.262207985 / 7.263232231 ms`; candidate
+  round medians were `1.029631972 / 1.049600005 / 1.029119968 ms`.
+- Guard Case 12 same-job baseline/candidate medians were
+  `0.947200000 / 0.153600007 ms`, a `6.166666376x` speedup. Against I08
+  candidate `0.154624000 ms`, the old/new gain is `0.666662%`, so the guard
+  does not regress and remains within the 1% limit. Baseline round medians were
+  `0.944127977 / 0.948640019 / 0.948591977 ms`; all three candidate round
+  medians were `0.153600007 ms`.
+- Decision: focused `promote`. Strict correctness passed, Case 11 cleared the
+  1.5% improvement gate, and the unaffected Case-12 guard did not regress.
+  The one-parameter result supports the two-warp small-accumulator hypothesis;
+  no config-prune follow-up is needed. This partial-case result is not a full
+  matrix performance claim.
