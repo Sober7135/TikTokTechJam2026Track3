@@ -408,6 +408,18 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("valid_token_mask is None", fused_gate)
         self.assertNotIn("x.numel()", fused_gate)
 
+    def test_ffn_out_residual_fusion_includes_large_d128_shapes(self) -> None:
+        block_source = inspect.getsource(UserOptimizedTransformerBlock.forward)
+        fused_gate = block_source.split("use_fused_ffn_out =", 1)[1].split(
+            "if use_fused_ffn_out:", 1
+        )[0]
+
+        self.assertIn("(64, 1024, 128)", fused_gate)
+        self.assertIn("(10000, 128, 128)", fused_gate)
+        self.assertIn("valid_token_mask is None", fused_gate)
+        self.assertIn("hidden.is_contiguous()", fused_gate)
+        self.assertIn("x.is_contiguous()", fused_gate)
+
     def test_full_hd32_pv_sequence_major_layout_is_transpose_contiguous(self) -> None:
         for batch, seq_len in ((16, 128), (64, 32)):
             backing = torch.empty(batch, seq_len, 4, 32)
