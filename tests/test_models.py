@@ -4,7 +4,7 @@ import unittest
 
 import torch
 
-from transformer_benchmark.cases import TransformerConfig
+from transformer_benchmark.cases import OFFICIAL_TEST_CASES, TransformerConfig
 from transformer_benchmark.correctness import compare_outputs
 from transformer_benchmark.models import (
     BaselineTransformerBlock,
@@ -484,7 +484,6 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         optimized._cuda_graph_live_signature = lambda _x, _mask, _all_true: (
             "stable",
         )
-
         x = torch.zeros(1, 8, 16)
         valid_token_mask = torch.ones(1, 8, dtype=torch.bool)
         first = optimized(x, valid_token_mask)
@@ -493,6 +492,63 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIsNot(first, second)
         self.assertEqual(first.item(), 1.0)
         self.assertEqual(second.item(), 2.0)
+
+    def test_external_final_norm_dispatch_is_case11_only(self) -> None:
+        for case_id, config in enumerate(OFFICIAL_TEST_CASES, start=1):
+            optimized = UserOptimizedTransformer(config)
+            self.assertEqual(
+                optimized._external_final_norm_eligible(),
+                case_id == 11,
+            )
+            self.assertEqual(
+                optimized.forward.__func__
+                is UserOptimizedTransformer._forward_case11_graph,
+                case_id == 11,
+            )
+
+    def test_case11_graph_replay_final_norm_returns_independent_outputs(self) -> None:
+        optimized = UserOptimizedTransformer(OFFICIAL_TEST_CASES[10]).eval()
+        static_hidden = torch.zeros(1)
+
+        class FakeGraph:
+            def replay(self) -> None:
+                static_hidden.add_(1)
+
+        optimized._cuda_graph = FakeGraph()
+        optimized._cuda_graph_output = static_hidden
+        optimized._cuda_graph_signature = ("stable",)
+        optimized._cuda_graph_eligible = lambda _x, _mask: True
+        optimized._mask_is_all_true = lambda _mask: True
+        optimized._cuda_graph_live_signature = lambda _x, _mask, _all_true: (
+            "stable",
+        )
+        optimized._finalize_output = lambda hidden, _mask: hidden.clone()
+
+        x = torch.zeros(64, 128, 128)
+        valid_token_mask = torch.ones(64, 128, dtype=torch.bool)
+        first = optimized(x, valid_token_mask)
+        second = optimized(x, valid_token_mask)
+
+        self.assertIsNot(first, second)
+        self.assertEqual(first.item(), 1.0)
+        self.assertEqual(second.item(), 2.0)
+
+    def test_graph_boundary_preserves_final_norm_and_mask_order(self) -> None:
+        config = TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        optimized = UserOptimizedTransformer(config).eval()
+        x = torch.randn(1, 8, 16)
+        valid_token_mask = torch.ones(1, 8, dtype=torch.bool)
+        valid_token_mask[:, -2:] = False
+
+        with torch.inference_mode():
+            eager = optimized._forward_eager(x, valid_token_mask)
+            split = optimized._finalize_output(
+                optimized._forward_layers(x, valid_token_mask),
+                valid_token_mask,
+            )
+
+        self.assertTrue(torch.equal(eager, split))
+        self.assertTrue(torch.equal(split[:, -2:], torch.zeros_like(split[:, -2:])))
 
 
 if __name__ == "__main__":
