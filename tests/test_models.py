@@ -457,6 +457,45 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn(".to(tl.bfloat16)", kernel_source)
         self.assertIn("num_warps=4", wrapper_source)
 
+    def test_case13_keeps_bf16_scores_until_native_softmax_load(self) -> None:
+        attention = UserOptimizedTransformer(
+            TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        ).layers[0].attention
+        chunk_source = inspect.getsource(attention._chunked_triangular_context)
+
+        self.assertIn(
+            "use_case13_bf16_score_transport = use_case13_pv_kernel",
+            chunk_source,
+        )
+        self.assertIn(
+            "output_float32=not use_case13_bf16_score_transport",
+            chunk_source,
+        )
+        self.assertIn(
+            "output_float16=use_case13_bf16_score_transport",
+            chunk_source,
+        )
+        self.assertIn(
+            "torch._softmax(prefix_scores, -1, True)",
+            chunk_source,
+        )
+        self.assertIn(
+            "prefix_probs_float32 = torch.softmax(prefix_scores, dim=-1)",
+            chunk_source,
+        )
+
+        from transformer_benchmark.triangular_scores import (
+            _triangular_scores_kernel,
+            triangular_causal_score_chunk,
+        )
+
+        score_wrapper_source = inspect.getsource(triangular_causal_score_chunk)
+        score_kernel_source = inspect.getsource(_triangular_scores_kernel.fn)
+        self.assertIn("output_float16: bool = False", score_wrapper_source)
+        self.assertIn("torch.float16 if output_float16", score_wrapper_source)
+        self.assertIn("output_float16=output_float16", score_wrapper_source)
+        self.assertIn("scores = scores.to(tl.float16)", score_kernel_source)
+
     def test_exact_gelu_fusion_includes_declared_d128_ffn128_shapes(self) -> None:
         block_source = inspect.getsource(UserOptimizedTransformerBlock.forward)
         fused_gate = block_source.split("use_fused_ffn_in =", 1)[1].split(

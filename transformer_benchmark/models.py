@@ -253,6 +253,11 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
         use_hd8_pv_kernel = tuple(query.shape) == (64, 16, 128, 8)
         use_case7_hd8_pv_kernel = tuple(query.shape) == (64, 4, 128, 8)
         use_case13_pv_kernel = tuple(query.shape) == (64, 4, 1024, 32)
+        # Case 13's score values have already crossed the reference's BF16 dot
+        # and scale boundaries. Keep that compact representation in global
+        # memory and let ATen's native half-to-float softmax widen values as it
+        # loads them, instead of widening every score in the QK store first.
+        use_case13_bf16_score_transport = use_case13_pv_kernel
         if use_hd8_pv_kernel or use_case7_hd8_pv_kernel or use_case13_pv_kernel:
             batch, heads, _, head_dim = query.shape
             context_sequence_major = torch.empty(
@@ -293,10 +298,14 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                     self.scale,
                     row_start,
                     row_stop,
-                    output_float32=True,
+                    output_float32=not use_case13_bf16_score_transport,
+                    output_float16=use_case13_bf16_score_transport,
                     consolidate_key_tile=use_case6_batch_chunks,
                 )
-                prefix_probs_float32 = torch.softmax(prefix_scores, dim=-1)
+                if use_case13_bf16_score_transport:
+                    prefix_probs_float32 = torch._softmax(prefix_scores, -1, True)
+                else:
+                    prefix_probs_float32 = torch.softmax(prefix_scores, dim=-1)
                 if direct_context_write:
                     if context_batch is None:
                         raise RuntimeError(

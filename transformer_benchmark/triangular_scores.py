@@ -32,6 +32,7 @@ def _triangular_scores_kernel(
     block_key_size: tl.constexpr,
     skip_fully_future: tl.constexpr,
     output_float32: tl.constexpr,
+    output_float16: tl.constexpr,
 ):
     block_bh = tl.program_id(0)
     batch_index = block_bh // heads
@@ -60,7 +61,9 @@ def _triangular_scores_kernel(
         future_scores = tl.full(
             (block_query_size, block_key_size), -float("inf"), tl.float32
         )
-        if not output_float32:
+        if output_float16:
+            future_scores = future_scores.to(tl.float16)
+        elif not output_float32:
             future_scores = future_scores.to(tl.bfloat16)
         tl.store(scores_ptr + score_offsets, future_scores, mask=output_mask)
     else:
@@ -94,6 +97,11 @@ def _triangular_scores_kernel(
         scores = (scores * scale_value).to(tl.bfloat16)
         if output_float32:
             scores = scores.to(tl.float32)
+        elif output_float16:
+            # Case 13 stores the already-rounded BF16 score directly as FP16
+            # for ATen's CUDA half-to-float softmax. This is part of the QK
+            # store, not a later full-score conversion pass.
+            scores = scores.to(tl.float16)
         causal_mask = key_rows[None, :] <= query_rows[:, None]
         scores = tl.where(causal_mask, scores, -float("inf"))
         tl.store(scores_ptr + score_offsets, scores, mask=output_mask)
@@ -162,6 +170,7 @@ def triangular_causal_scores(
         skip_fully_future=(batch, heads, seq_len, head_dim)
         == (64, 1, 128, 128),
         output_float32=output_float32,
+        output_float16=False,
         num_warps=4 if block_size == 32 else 8,
         num_stages=2,
     )
@@ -175,6 +184,7 @@ def triangular_causal_score_chunk(
     row_start: int,
     row_stop: int,
     output_float32: bool = False,
+    output_float16: bool = False,
     consolidate_key_tile: bool = False,
 ) -> torch.Tensor:
     """Compute a compact causal score block using the exact tiled QK path."""
@@ -184,6 +194,8 @@ def triangular_causal_score_chunk(
         raise ValueError("score chunks require CUDA BF16 tensors")
     if query.stride(-1) != 1 or key.stride(-1) != 1:
         raise ValueError("score chunks require unit-stride head dimensions")
+    if output_float32 and output_float16:
+        raise ValueError("score chunks cannot request both FP32 and FP16 output")
 
     batch, heads, seq_len, head_dim = query.shape
     if not (0 <= row_start < row_stop <= seq_len):
@@ -233,10 +245,15 @@ def triangular_causal_score_chunk(
     else:
         block_key_size = block_query_size
 
+    output_dtype = (
+        torch.float32
+        if output_float32
+        else torch.float16 if output_float16 else query.dtype
+    )
     scores = torch.empty(
         (batch, heads, row_count, row_stop),
         device=query.device,
-        dtype=torch.float32 if output_float32 else query.dtype,
+        dtype=output_dtype,
     )
     grid = (
         batch * heads,
@@ -267,6 +284,7 @@ def triangular_causal_score_chunk(
         block_key_size=block_key_size,
         skip_fully_future=seq_len == 1024,
         output_float32=output_float32,
+        output_float16=output_float16,
         num_warps=4 if block_query_size <= 32 else 8,
         num_stages=2,
     )
