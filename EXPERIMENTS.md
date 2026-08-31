@@ -1356,3 +1356,61 @@
   limit. No bug follow-up is needed. Integrate the implementation commit into
   the shared winner and require a new ordinary unified Cases 1-13 job before a
   matrix-wide promotion claim.
+
+### E01 deterministic review
+
+- Identity and scope: ordinary job `job-1788134123272-8f4753aca47ede5c`
+  evaluated immutable snapshot
+  `213f0e091b0e9780cbe6cb8b8604fccc1686dcb022ef6657797cb50baa51d96d`
+  from optimization commit `14f79942735c3e6316e9ddaf81e7522a960baa92`.
+  `job.json` records exactly official cases 4/9/11/12/13, CUDA BF16, pinned
+  Python 3.12.14 and package identity, terminal state `succeeded`, exit zero,
+  and no execution error. The structured result is complete for all five
+  requested cases on RTX 4070 with PyTorch 2.13.0+cu130/CUDA 13.0, five
+  accuracy trials, 20 warmups, 100 repeats, and three alternating rounds.
+- Correctness passed before timing was interpreted. All 25 trials were bitwise
+  exact under the strict OR rule: `0 / 55,050,240` failed elements with zero
+  maximum absolute and relative error. Every requested case reports the
+  expected shape/dtype, finite values, `status=succeeded`, and no failure
+  category.
+
+| Case | I07 candidate (ms) | E01 baseline (ms) | E01 candidate (ms) | Same-job speedup | I07 / E01 - 1 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 0.220159993 | 0.958752006 | 0.219136000 | 4.375146063x | +0.467286% |
+| 9 | 0.496639997 | 0.877568007 | 0.489472002 | 1.792887036x | +1.464434% |
+| 11 | 1.077247977 | 7.273471832 | 1.039360046 | 6.998029083x | +3.645313% |
+| 12 | 0.153600007 | 0.957039982 | 0.153600007 | 6.230728754x | +0.000000% |
+| 13 | 34.628608704 | 110.881790161 | 34.844673157 | 3.182173346x | -0.620079% |
+
+- I07 and E01 five-case candidate-latency geometric means are
+  `0.910719031 / 0.901876450 ms`. Latency falls `0.970945%`, equivalently the
+  preregistered old/new metric improves `0.980465%`, exceeding the `0.75%`
+  gate. Case 13 is the only regression: the table's old/new delta is
+  `-0.620079%`, equivalently its latency rises `0.623948%`, below the 2% gate.
+- The same-job equal-case paired-speedup geometric mean is `4.049083950x`.
+  Focused baseline/candidate median sums are
+  `120.948621988 / 36.746241212 ms`, a sum-ratio speedup of `3.291455616x`.
+- Raw-derived baseline round medians for cases 4/9/11/12/13 (ms) are,
+  respectively:
+  `0.957520008/0.961519986/0.958432019`,
+  `0.880639970/0.881663978/0.872448027`,
+  `7.270400047/7.275519848/7.275519848`,
+  `0.956463993/0.957872003/0.956271976`, and
+  `110.880767822/110.882812500/110.882335663`.
+- Corresponding candidate round medians (ms) are:
+  `0.219136000/0.218768001/0.219136000`,
+  `0.484351993/0.490496010/0.483328015`,
+  `1.036288023/1.067200005/1.037312031`,
+  `0.153600007/0.153600007/0.153600007`, and
+  `34.844673157/34.843647003/34.844673157`. All winning-case rounds remain
+  below their I07 aggregate medians; Case 12 is unchanged and Case 13's stable
+  bounded regression remains inside the declared gate.
+- Decision: focused `promote`. E01 passes 25/25 strict trials, exceeds the
+  preregistered five-case geomean threshold, and has no case regression above
+  2%. No config-prune follow-up is needed. The benchmark harness does not
+  serialize Triton's selected config per key, so the end-to-end gain is
+  attributable to this one launch-search category but cannot be split between
+  the five added configs and sequence-aware key without a separate experiment.
+  Integrate only together with the supervisor's intended direct-QKV allowlist
+  pruning, then require a new ordinary unified cases 1-13 job before a
+  matrix-wide promotion claim.
