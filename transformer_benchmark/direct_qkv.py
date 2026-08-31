@@ -24,33 +24,8 @@ import triton.language as tl
             num_warps=8,
             num_stages=3,
         ),
-        triton.Config(
-            {"block_rows": 32, "block_columns": 128, "block_reduction": 32},
-            num_warps=4,
-            num_stages=3,
-        ),
-        triton.Config(
-            {"block_rows": 64, "block_columns": 64, "block_reduction": 32},
-            num_warps=4,
-            num_stages=4,
-        ),
-        triton.Config(
-            {"block_rows": 64, "block_columns": 128, "block_reduction": 32},
-            num_warps=4,
-            num_stages=3,
-        ),
-        triton.Config(
-            {"block_rows": 128, "block_columns": 64, "block_reduction": 32},
-            num_warps=8,
-            num_stages=3,
-        ),
-        triton.Config(
-            {"block_rows": 128, "block_columns": 128, "block_reduction": 32},
-            num_warps=8,
-            num_stages=3,
-        ),
     ],
-    key=["row_count", "width", "sequence_length", "head_count"],
+    key=["row_count", "width", "head_count"],
 )
 @triton.jit
 def _bf16_qkv_direct_layout_kernel(

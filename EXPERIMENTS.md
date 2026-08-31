@@ -1414,3 +1414,47 @@
   Integrate only together with the supervisor's intended direct-QKV allowlist
   pruning, then require a new ordinary unified cases 1-13 job before a
   matrix-wide promotion claim.
+
+## I08 combined QKV prune plus autotune - unified retain-best
+
+- Integrated the independently promoted QKV allowlist prune and sequence-aware
+  autotune as unsigned commits `8d53d5d` and `79600b2`, retaining both result
+  records as `94a3bb9` and `93b1f4d`. Static validation passed full Python
+  compilation, 24/24 tests, and CPU BF16 smoke bitwise exactly at `0 / 128`.
+- Unified ordinary job/snapshot:
+  `job-1788134737177-f4ec2ab0e450c14a` /
+  `0c0e40cbe6c7adaa838659fe625629773df3ef76b54d19fe6b338b6c8a9399c6`;
+  base `93b1f4de5504aadf0b519d3866d32668a98ddfe0`, official CUDA BF16 Cases
+  1-13, five trials, 20 warmups, 100 repeats, three rounds, state succeeded.
+- Correctness passed before timing interpretation: all 65 trials were bitwise
+  exact, `0 / 938,885,120` failed elements, with zero maximum absolute and
+  relative error.
+- Same-job paired speedup geomean was `3.343484256x`; total-call speedup was
+  `555.468385458 / 216.508106381 = 2.565577773x`. Against I07, all-case
+  candidate-latency geomean improved `0.301226%`, but total candidate latency
+  regressed `0.069384%` and aggregate MFU fell from `16.009836%` to
+  `15.998728%`.
+- Versus I07 candidate medians, Cases 1-13 changed
+  `+1.245561% / 0 / 0 / 0 / +0.523564% / +0.034146% / 0 /
+  -0.046977% / +0.206613% / +2.459023% / +0.190478% / 0 /
+  -0.660948%`. Case 11's focused autotune gain did not survive the unified
+  run: speedup was `6.766399x`, not 7x. Case 13's stable regression dominates
+  the total-latency and MFU result.
+- Decision: combined I08 is `retain-best`; I07 remains the shared winner.
+  Unified evidence separates the routes: the allowlist prune had no focused
+  regressions, whereas the autotune's Case-13 regression persists and its
+  Case-11 focused gain does not. Use the integration's single focused follow-up
+  to revert only autotune source/tests while preserving its commits and result
+  record, then run one unified prune-only Cases 1-13 job. No further follow-up
+  is permitted.
+
+## I08b prune-only integration - final follow-up candidate
+
+- This follow-up commit removes only the launch-config and sequence-key changes from
+  integrated commit `79600b2`; it retains the five-shape direct-QKV allowlist
+  from `8d53d5d`, all I07 kernel math, BF16 rounding, dispatch fallbacks, and
+  the complete audit history.
+- Pre-GPU gate: full Cases 1-13 strict correctness must pass. Promote only if
+  prune-only candidate geomean and total candidate latency both improve over
+  I07 without a material per-case regression; otherwise retain I07. This is
+  the final integration follow-up for the round.

@@ -185,35 +185,6 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("(3, batch, num_heads, sequence_length, head_dimension)", wrapper_source)
         self.assertIn("output.unbind(dim=0)", wrapper_source)
 
-    def test_direct_qkv_autotune_separates_sequence_store_shapes(self) -> None:
-        from transformer_benchmark.direct_qkv import (
-            _bf16_qkv_direct_layout_kernel,
-        )
-
-        self.assertEqual(
-            _bf16_qkv_direct_layout_kernel.keys,
-            ["row_count", "width", "sequence_length", "head_count"],
-        )
-        configs = {
-            (
-                config.kwargs["block_rows"],
-                config.kwargs["block_columns"],
-                config.kwargs["block_reduction"],
-                config.num_warps,
-                config.num_stages,
-            )
-            for config in _bf16_qkv_direct_layout_kernel.configs
-        }
-        self.assertTrue(
-            {
-                (32, 128, 32, 4, 3),
-                (64, 64, 32, 4, 4),
-                (64, 128, 32, 4, 3),
-                (128, 64, 32, 8, 3),
-                (128, 128, 32, 8, 3),
-            }.issubset(configs)
-        )
-
     def test_packed_value_kernel_accepts_strided_value_layout(self) -> None:
         from transformer_benchmark.pv_context import bf16_probability_value
 
