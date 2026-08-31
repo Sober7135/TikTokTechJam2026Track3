@@ -196,10 +196,10 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         )[1].split("else:", 1)[0]
 
         self.assertIn("_bf16_qkv_direct_layout_kernel.fn[fixed_grid]", fixed_block)
-        self.assertIn("block_rows=64", fixed_block)
+        self.assertIn("block_rows=128", fixed_block)
         self.assertIn("block_columns=128", fixed_block)
         self.assertIn("block_reduction=32", fixed_block)
-        self.assertIn("num_warps=4", fixed_block)
+        self.assertIn("num_warps=8", fixed_block)
         self.assertIn("num_stages=3", fixed_block)
 
         fallback_block = wrapper_source.split("else:", 1)[1]

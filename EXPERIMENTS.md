@@ -1598,3 +1598,69 @@
   The CPU smoke exercises the fallback and is not GPU performance evidence.
   Ordinary job/snapshot, raw timings, and the deterministic decision are
   pending.
+
+### E01 deterministic review
+
+- Identity and scope: ordinary job
+  `job-1788135766924-5c720d633274e237` evaluated immutable snapshot
+  `3360c3ea95c2ee0fc062374b6cfcc44d88271e00985c8f4fba55bb22dda9983f`
+  from implementation commit `f5ebf2ee28e16b9e62e6a98ae58ecf864743e3d8`.
+  `job.json` records exactly official Cases 11 and 13, CUDA BF16, pinned
+  Python 3.12.14 and package identity, terminal state `succeeded`, exit zero,
+  and no execution error. The structured result is complete on RTX 4070 with
+  PyTorch 2.13.0+cu130/CUDA 13.0, five accuracy trials, 20 warmups, 100
+  repeats, and three alternating rounds.
+- Correctness passed before timing interpretation. All 10 trials were bitwise
+  exact under the strict OR rule: `0 / 47,185,920` failed elements with zero
+  maximum absolute and relative error. Both cases report the expected shape,
+  dtype, finite values, and no failure category.
+- Same-job baseline/candidate medians and speedups were
+  `7.263232231 / 1.065984011 ms / 6.813640879x` for Case 11 and
+  `110.875648499 / 34.634767532 ms / 3.201281729x` for Case 13. Their
+  equal-case speedup geometric mean was `4.670373010x`; focused median sums
+  were `118.138880730 / 35.700751543 ms` (`3.309142683x`).
+- Against prune-only I08 job `job-1788135136705-0ad3283d01e0b2e4`, Case 11
+  fell from `1.077247977` to `1.065984011 ms`, an old/new improvement of
+  `1.056673%`; this misses the preregistered `2%` gate. Case 13 rose only from
+  `34.629631042` to `34.634767532 ms`, a `0.014833%` regression, passing its
+  `0.5%` guard.
+- Raw-derived baseline round medians were
+  `7.261184216/7.263232231/7.263232231 ms` for Case 11 and
+  `110.876304626/110.876670837/110.874752045 ms` for Case 13. Candidate
+  round medians were `1.063935995/1.068032026/1.065984011 ms` and
+  `34.634239197/34.636287689/34.634750366 ms`, respectively. Every Case-11
+  round improves over the I08 aggregate by `1.251201%/0.862891%/1.056673%`,
+  with only `0.384988%` max/min spread, so the sign is stable but its magnitude
+  remains below the gate.
+- Decision: `retain-best`. E01 is correct, stable, and protects Case 13, but
+  does not recover enough of the prior focused autotune result. Use the single
+  authorized replacement follow-up to test the already-searched
+  `128x128x32`, eight-warp, three-stage config; if that misses, retain I08 and
+  close this route without another follow-up.
+
+## I08 Case 11 direct-QKV fixed launch E02 - final replacement
+
+- Status: preregistered final candidate. E01's fixed `64x128x32`, four-warp,
+  three-stage launch was bitwise exact and improved every Case-11 round, but
+  its aggregate gain was only `1.056673%`, below the `2%` gate. The single
+  authorized replacement selects another config from the prior focused
+  autotune search rather than widening the search again.
+- Hypothesis: exact Case 11 remains `M=8192, N=384, K=128`. Fixing
+  `128x128x32`, eight warps, and three stages halves E01's launch from 384 to
+  192 CTAs while preserving exactly three N tiles. The launch still exposes
+  more than four CTAs per RTX 4070 SM, and its larger M tile can amortize
+  scheduling and direct-layout store setup enough to reach the missing `2%`
+  end-to-end threshold.
+- Attribution and equivalence: only `block_rows` and `num_warps` change from
+  E01. The raw I08 kernel, K=32 reduction order, FP32 accumulation, bias,
+  explicit BF16 rounding, direct output addresses, exact Case-11 dispatch,
+  Case-13 autotuner, and all other fallbacks are identical.
+- Final gate: Cases 11 and 13 must again pass all 10 strict trials. Promote only
+  if Case 11 improves at least `2%` versus I08 `1.077247977 ms`, Case 13
+  regression remains at most `0.5%` versus `34.629631042 ms`, and all three
+  Case-11 rounds keep the improvement sign. There is no further follow-up;
+  failure retains I08 and closes this route.
+- Static validation passed `git diff --check`, full Python compilation, 24/24
+  unit tests, and the prescribed CPU BF16 fallback smoke bitwise exactly at
+  `0 / 128`. This is not GPU performance evidence. Ordinary benchmark
+  evidence is pending.
