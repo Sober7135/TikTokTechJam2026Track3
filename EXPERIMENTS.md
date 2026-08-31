@@ -1771,3 +1771,65 @@
   Integration still requires a new ordinary unified Cases 1-13 job before any
   matrix-wide promotion claim; focused same-job Case-11 speedup remains
   `6.890184x`, below the wider 7x target.
+
+## Winner integration I09 - combined PV launch and Case-11 QKV specializations
+
+- Integrated scope: layer the independently attributable HD8 PV two-warp
+  launch, full HD32 PV Case-4 row split / Case-12 two-warp launch, and final
+  fixed Case-11 direct-QKV tile on prune-only I08. The source changes remain
+  separate unsigned commits (`07132c9`, `6e2f66c`, `8bb07bd`, and `2415330`)
+  with their original dispatch, equivalence, fallback, validation, and rollback
+  explanations; the associated focused-result commits are also preserved.
+- Static integration validation passed `git diff --check`, full Python
+  compilation, 24/24 unit tests, and the prescribed CPU BF16 fallback smoke
+  bitwise exactly at `0 / 128`. CPU execution is not GPU performance evidence.
+- Unified deterministic identity: ordinary job
+  `job-1788136508167-1b1b4acd2b1d637d` evaluated immutable snapshot
+  `067aafc231ae874976af42e0aa243f6cea70a0ea585a166d56e8e95a47c07bdf`
+  from the winner integration worktree. `job.json` records exactly official
+  Cases 1-13, CUDA BF16, pinned Python 3.12.14, terminal state `succeeded`,
+  exit zero, and no error. The structured result is complete on RTX 4070 with
+  PyTorch 2.13.0+cu130 and CUDA 13.0.
+- Correctness passed before performance interpretation. All requested cases
+  and all 65 trials were bitwise exact under the strict OR rule:
+  `0 / 938,885,120` failed elements, zero maximum absolute and relative error,
+  expected shape/dtype, finite outputs, and no failure category. Every case has
+  300 baseline and 300 candidate timing samples (20 warmups, 100 repeats, three
+  alternating rounds).
+- Same-job per-case baseline/candidate medians and paired speedups were:
+
+  | Case | Baseline ms | Candidate ms | Speedup |
+  |---:|---:|---:|---:|
+  | 1 | 1.421312 | 0.576608 | 2.464954x |
+  | 2 | 0.959216 | 0.098304 | 9.757649x |
+  | 3 | 0.954448 | 0.126976 | 7.516759x |
+  | 4 | 0.959104 | 0.211968 | 4.524758x |
+  | 5 | 3.222800 | 1.174528 | 2.743911x |
+  | 6 | 414.120972 | 165.890045 | 2.496358x |
+  | 7 | 1.099776 | 0.498688 | 2.205339x |
+  | 8 | 11.689216 | 10.892288 | 1.073164x |
+  | 9 | 0.871760 | 0.487424 | 1.788505x |
+  | 10 | 1.111040 | 0.500736 | 2.218814x |
+  | 11 | 7.277568 | 1.061888 | 6.853423x |
+  | 12 | 0.956688 | 0.153600 | 6.228437x |
+  | 13 | 110.907394 | 34.630657 | 3.202578x |
+
+- Aggregate metrics keep distinct denominators. The equal-case geometric mean
+  of the 13 paired speedups is `3.368691310x`. Summing the 13 medians gives
+  `555.551294148 / 216.303710565 ms`, or a one-call-total-latency speedup of
+  `2.568385409x`. Aggregate MFU is `16.013845757%`, using
+  `sum(FLOPs) / sum(candidate median latency) / 58.25e12` and
+  `F=L*(8BSD^2 + 4BS^2D + 4BSDF)`; this is a supervisor-derived convention,
+  not a harness field.
+- Against I08 candidate medians, Cases 4/11/12 improve
+  `3.864728% / 1.446480% / 0.666662%`. Candidate-latency geometric mean falls
+  from `1.067105806` to `1.063487668 ms`, an old/new gain of `0.340214%`.
+  Candidate median sum rises only from `216.273105852` to `216.303710565 ms`
+  (`0.014149%` regression), dominated by a `0.030745%` Case-6 timing shift;
+  this is below a material-regression threshold and the same-job total-speedup
+  change is only `-0.000110%` relative.
+- Decision: promote I09 as the shared winner. The three targeted dispatches
+  retain strict matrix-wide correctness and improve their intended cases with
+  no material cross-case regression. Cases 2/3 remain above the requested 7x
+  level; Case 11 reaches `6.853423x` and Case 12 `6.228437x`, so the wider
+  multi-case 7-10x objective remains open.
