@@ -271,10 +271,9 @@ class UserOptimizedTransformerTests(unittest.TestCase):
             "use_case7_hd8_pv_kernel = tuple(query.shape) == (64, 4, 128, 8)",
             chunk_source,
         )
-        self.assertIn(
-            "if use_hd8_pv_kernel or use_case7_hd8_pv_kernel:",
-            chunk_source,
-        )
+        self.assertIn("use_hd8_pv_kernel", chunk_source)
+        self.assertIn("use_case7_hd8_pv_kernel", chunk_source)
+        self.assertIn("use_case13_pv_kernel", chunk_source)
         self.assertIn("bf16_probability_value_hd8_case7", chunk_source)
 
         from transformer_benchmark.pv_context import (
@@ -366,6 +365,33 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         self.assertIn("chunk_size = 256", chunk_block)
         self.assertIn("chunk_size = 32", chunk_block)
         self.assertNotIn("chunk_size = 128", chunk_block)
+
+    def test_case13_dispatches_tiled_k_direct_pv(self) -> None:
+        attention = UserOptimizedTransformer(
+            TransformerConfig(1, 8, 16, 4, 32, 1, True)
+        ).layers[0].attention
+        chunk_source = inspect.getsource(attention._chunked_triangular_context)
+        self.assertIn(
+            "use_case13_pv_kernel = tuple(query.shape) == (64, 4, 1024, 32)",
+            chunk_source,
+        )
+        self.assertIn("bf16_probability_value_case13", chunk_source)
+        self.assertIn("context_sequence_major.permute(0, 2, 1, 3)", chunk_source)
+
+        from transformer_benchmark.pv_context import (
+            _bf16_probability_value_case13_kernel,
+            bf16_probability_value_case13,
+        )
+
+        wrapper_source = inspect.getsource(bf16_probability_value_case13)
+        kernel_source = inspect.getsource(_bf16_probability_value_case13_kernel.fn)
+        self.assertIn("(batch, heads, row_count) != (64, 4, 256)", wrapper_source)
+        self.assertIn("key_count not in (256, 512, 768, 1024)", wrapper_source)
+        self.assertIn("tuple(value.shape) != (64, 4, 1024, 32)", wrapper_source)
+        self.assertIn("range(0, block_key_count, 128)", kernel_source)
+        self.assertIn("accumulator += tl.dot", kernel_source)
+        self.assertIn(".to(tl.bfloat16)", kernel_source)
+        self.assertIn("num_warps=4", wrapper_source)
 
     def test_cases4_and12_extend_exact_gelu_fusion_by_exact_shape(self) -> None:
         block_source = inspect.getsource(UserOptimizedTransformerBlock.forward)

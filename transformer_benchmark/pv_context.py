@@ -175,6 +175,121 @@ def bf16_probability_value(
 
 
 @triton.jit
+def _bf16_probability_value_case13_kernel(
+    probability_ptr,
+    value_ptr,
+    context_ptr,
+    probability_stride_batch: tl.constexpr,
+    probability_stride_head: tl.constexpr,
+    probability_stride_row: tl.constexpr,
+    value_stride_batch: tl.constexpr,
+    value_stride_head: tl.constexpr,
+    value_stride_row: tl.constexpr,
+    context_stride_batch: tl.constexpr,
+    context_stride_head: tl.constexpr,
+    context_stride_row: tl.constexpr,
+    heads: tl.constexpr,
+    row_start: tl.constexpr,
+    key_count: tl.constexpr,
+    block_key_count: tl.constexpr,
+):
+    block_bh = tl.program_id(0)
+    batch_index = block_bh // heads
+    head_index = block_bh % heads
+    rows = tl.program_id(1) * 64 + tl.arange(0, 64)
+    columns = tl.arange(0, 32)
+    reduction_offsets = tl.arange(0, 128)
+    accumulator = tl.zeros((64, 32), dtype=tl.float32)
+
+    # Keep shared-memory use bounded by reducing K in 128-wide tensor-core
+    # tiles. Probability rounding still occurs before every dot, while the
+    # partial dot results accumulate in FP32 in increasing key order.
+    for key_start in range(0, block_key_count, 128):
+        keys = key_start + reduction_offsets
+        probabilities = tl.load(
+            probability_ptr
+            + batch_index * probability_stride_batch
+            + head_index * probability_stride_head
+            + rows[:, None] * probability_stride_row
+            + keys[None, :],
+            mask=keys[None, :] < key_count,
+            other=0.0,
+        ).to(tl.bfloat16)
+        values = tl.load(
+            value_ptr
+            + batch_index * value_stride_batch
+            + head_index * value_stride_head
+            + keys[:, None] * value_stride_row
+            + columns[None, :],
+            mask=keys[:, None] < key_count,
+            other=0.0,
+        )
+        accumulator += tl.dot(probabilities, values, out_dtype=tl.float32)
+
+    context_offsets = (
+        batch_index * context_stride_batch
+        + head_index * context_stride_head
+        + (row_start + rows[:, None]) * context_stride_row
+        + columns[None, :]
+    )
+    tl.store(context_ptr + context_offsets, accumulator.to(tl.bfloat16))
+
+
+def bf16_probability_value_case13(
+    probabilities: torch.Tensor,
+    value: torch.Tensor,
+    context: torch.Tensor,
+    row_start: int,
+) -> None:
+    """Write one Case13 BF16 PV prefix directly into final context backing."""
+    if probabilities.device.type != "cuda" or probabilities.dtype != torch.float32:
+        raise ValueError("case13 probabilities must be a CUDA FP32 tensor")
+    if value.device != probabilities.device or value.dtype != torch.bfloat16:
+        raise ValueError("case13 value must be CUDA BF16 on the same device")
+    if context.device != value.device or context.dtype != torch.bfloat16:
+        raise ValueError("case13 context must be CUDA BF16 on the same device")
+    if probabilities.ndim != 4 or value.ndim != 4 or context.ndim != 4:
+        raise ValueError("case13 PV tensors must be rank 4")
+
+    batch, heads, row_count, key_count = probabilities.shape
+    if (batch, heads, row_count) != (64, 4, 256):
+        raise ValueError("case13 PV requires a 64x4x256 probability prefix")
+    if key_count not in (256, 512, 768, 1024):
+        raise ValueError("case13 PV key count must be 256, 512, 768, or 1024")
+    if tuple(value.shape) != (64, 4, 1024, 32):
+        raise ValueError("case13 PV requires the exact value shape")
+    if tuple(context.shape) != tuple(value.shape):
+        raise ValueError("case13 context and value shapes must match")
+    if row_start not in (0, 256, 512, 768) or key_count != row_start + 256:
+        raise ValueError("case13 PV row and key prefixes must end together")
+    if not probabilities.is_contiguous():
+        raise ValueError("case13 probabilities must be contiguous")
+    if value.stride(-1) != 1 or context.stride(-1) != 1:
+        raise ValueError("case13 value and context columns must be unit stride")
+
+    _bf16_probability_value_case13_kernel[(batch * heads, 4)](
+        probabilities,
+        value,
+        context,
+        probability_stride_batch=probabilities.stride(0),
+        probability_stride_head=probabilities.stride(1),
+        probability_stride_row=probabilities.stride(2),
+        value_stride_batch=value.stride(0),
+        value_stride_head=value.stride(1),
+        value_stride_row=value.stride(2),
+        context_stride_batch=context.stride(0),
+        context_stride_head=context.stride(1),
+        context_stride_row=context.stride(2),
+        heads=heads,
+        row_start=row_start,
+        key_count=key_count,
+        block_key_count=triton.next_power_of_2(key_count),
+        num_warps=4,
+        num_stages=2,
+    )
+
+
+@triton.jit
 def _bf16_probability_value_hd8_kernel(
     probability_ptr,
     value_ptr,

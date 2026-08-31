@@ -252,7 +252,8 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
         seq_len = query.shape[-2]
         use_hd8_pv_kernel = tuple(query.shape) == (64, 16, 128, 8)
         use_case7_hd8_pv_kernel = tuple(query.shape) == (64, 4, 128, 8)
-        if use_hd8_pv_kernel or use_case7_hd8_pv_kernel:
+        use_case13_pv_kernel = tuple(query.shape) == (64, 4, 1024, 32)
+        if use_hd8_pv_kernel or use_case7_hd8_pv_kernel or use_case13_pv_kernel:
             batch, heads, _, head_dim = query.shape
             context_sequence_major = torch.empty(
                 (batch, seq_len, heads, head_dim),
@@ -296,6 +297,15 @@ class UserOptimizedSelfAttention(BaselineSelfAttention):
                     from .pv_context import bf16_probability_value_hd8_case7
 
                     bf16_probability_value_hd8_case7(
+                        prefix_probs_float32,
+                        value,
+                        context,
+                        row_start,
+                    )
+                elif use_case13_pv_kernel:
+                    from .pv_context import bf16_probability_value_case13
+
+                    bf16_probability_value_case13(
                         prefix_probs_float32,
                         value,
                         context,
