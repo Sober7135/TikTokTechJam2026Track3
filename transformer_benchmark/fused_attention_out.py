@@ -91,7 +91,6 @@ def bf16_attention_out_residual(
     weight: torch.Tensor,
     bias: torch.Tensor,
     residual: torch.Tensor,
-    num_heads: int,
 ) -> torch.Tensor:
     """Fuse a 128-wide BF16 attention projection with its residual add."""
     if context.device.type != "cuda" or context.dtype != torch.bfloat16:
@@ -112,46 +111,20 @@ def bf16_attention_out_residual(
         raise ValueError(
             "fused attention context, weight, and residual must be contiguous"
         )
-    if num_heads <= 0 or _WIDTH % num_heads != 0:
-        raise ValueError("fused attention heads must divide the model width")
 
     output = torch.empty_like(residual)
-    batch, sequence_length, _ = context.shape
     row_count = context.numel() // _WIDTH
     grid = lambda meta: (
         triton.cdiv(row_count, meta["block_rows"]),
         triton.cdiv(_WIDTH, meta["block_columns"]),
     )
-    launch_arguments = (
+    _bf16_attention_out_residual_kernel[grid](
         context,
         weight,
         bias,
         residual,
         output,
         row_count,
+        width=_WIDTH,
     )
-    if (batch, sequence_length, num_heads) in {
-        (64, 128, 16),
-    }:
-        # Case 11 benefits from halving the number of increasing K slices from
-        # four to two. Case 10 shares M=N=K but regressed under this launch, so
-        # H=2 deliberately remains on the historical autotuned fallback.
-        fixed_grid = (
-            triton.cdiv(row_count, 64),
-            triton.cdiv(_WIDTH, 64),
-        )
-        _bf16_attention_out_residual_kernel.fn[fixed_grid](
-            *launch_arguments,
-            width=_WIDTH,
-            block_rows=64,
-            block_columns=64,
-            block_reduction=64,
-            num_warps=4,
-            num_stages=3,
-        )
-    else:
-        _bf16_attention_out_residual_kernel[grid](
-            *launch_arguments,
-            width=_WIDTH,
-        )
     return output
