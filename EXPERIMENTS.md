@@ -2122,3 +2122,39 @@
   the changed Case-6 stable gain, candidate geomean, candidate sum, total
   speedup, and MFU all improve. Only Cases 2/3 remain at or above 7x; the
   broader multi-case 7-10x objective remains open.
+
+## O90 - Case-13 fully-future QK fragment skip
+
+- Parent/current unified winner: `f1d7140566fbdbb1976ad777c81c4eac5716cac3`.
+  The focused candidate interleaves M16xN8 score-fragment ownership across
+  eight warps and directly writes the established FP16 `-infinity` value for
+  complete fragments strictly above the causal diagonal. Live QK chains,
+  softmax, PV, dispatch, and fallbacks are unchanged.
+- Static/local evidence: the executable coordinate oracle proves disjoint and
+  complete writes, causal safety, and balanced ownership. All 46 tests, the
+  exact CPU smoke, the sm89 build, PTX/SASS dependency-chain checks, and
+  spill/resource checks passed before GPU evaluation.
+- Deterministic GPU identity: ordinary job
+  `job-1788219125730-051ece633911d073` evaluated immutable snapshot
+  `ad7ecf43cc5061e1e26516deeeecef1c5273373a0961bb498b4fb9dabd3eab76`.
+  It requested and completed exactly Cases 6/12/13 on an NVIDIA GeForce RTX
+  4070 using CUDA BF16, Python 3.12.14, PyTorch 2.13.0+cu130, and CUDA 13.0;
+  state succeeded, exit zero, complete result, and no execution failure.
+- Correctness was checked before performance. All 15 trials passed bitwise
+  exactly under the strict OR rule: `0 / 862,453,760` failed elements, zero
+  maximum absolute error, and zero maximum relative error.
+- Same-job medians and paired speedups were Case 6
+  `414.213134766 / 93.310974121 ms / 4.439061307x`, Case 12
+  `0.938383996 / 0.153663993 ms / 6.106726624x`, and Case 13
+  `110.882812500 / 12.170240402 ms / 9.110979638x`. Case-13 candidate round
+  medians were `12.172287941 / 12.168191910 / 12.213247776 ms`.
+- Against the current winner's comparable focused Case-13 candidate median
+  `12.617728233 ms`, O90 improves candidate latency by `3.546501%`. Baseline
+  drift is `-0.001851%`, and the paired-speedup ratio is `1.036750`, supporting
+  attribution to this change. Negative controls remain stable: Case 6 improves
+  `0.002199%`, while Case 12 regresses `0.041657%`.
+- Decision: `validated-building-block`, retain the current unified winner.
+  The result clears the 3% focused floor but affects only Case 13, so it does
+  not satisfy the 3-5% multi-case continuation/promote gate by itself. Preserve
+  the commit for combination with a later Case-6 route; require a new ordinary
+  focused and then unified job for any combined promotion claim.

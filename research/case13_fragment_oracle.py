@@ -107,6 +107,101 @@ class PrefixPlan:
     total_shared_bytes: int
 
 
+@dataclass(frozen=True)
+class QKFutureSkipPlan:
+    key_count: int
+    total_fragments: int
+    live_fragments: int
+    fully_future_fragments: int
+    score_coordinates_written: int
+    fully_future_score_coordinates: int
+    per_row_block_future_fragments: tuple[int, ...]
+    per_row_block_warp_future_fragments: tuple[tuple[int, ...], ...]
+
+
+def verify_qk_future_skip(key_count: int) -> QKFutureSkipPlan:
+    """Prove round-robin ownership and direct ``-inf`` tile coverage."""
+    if key_count not in (256, 512, 768, 1024):
+        raise ValueError("Case-13 prefix must be 256, 512, 768, or 1024")
+    row_start = key_count - 256
+    fragments_per_warp = key_count // 64
+    total_fragments = 0
+    fully_future_fragments = 0
+    fully_future_score_coordinates = 0
+    per_row_block_future_fragments: list[int] = []
+    per_row_block_warp_future_fragments: list[tuple[int, ...]] = []
+
+    for row_block in range(16):
+        owners: dict[int, int] = {}
+        writes: dict[Coordinate, tuple[int, int]] = {}
+        future_writes: set[Coordinate] = set()
+        warp_future_counts = [0] * 8
+        query_start = row_start + row_block * 16
+        query_stop = query_start + 16
+
+        for warp in range(8):
+            for local_fragment in range(fragments_per_warp):
+                fragment_index = local_fragment * 8 + warp
+                matrix_column = fragment_index * 8
+                if matrix_column in owners:
+                    raise AssertionError(f"duplicate QK tile {matrix_column}")
+                owners[matrix_column] = warp
+
+                fully_future = matrix_column > query_stop - 1
+                for lane in range(32):
+                    for local_row, local_column in official_c_coordinates(lane):
+                        coordinate = (local_row, matrix_column + local_column)
+                        if coordinate in writes:
+                            raise AssertionError(
+                                f"duplicate score write {coordinate}"
+                            )
+                        writes[coordinate] = (warp, local_fragment)
+                        if fully_future:
+                            global_query = query_start + local_row
+                            global_key = matrix_column + local_column
+                            if global_key <= global_query:
+                                raise AssertionError(
+                                    "direct -inf write crossed the causal diagonal"
+                                )
+                            future_writes.add(coordinate)
+
+                total_fragments += 1
+                if fully_future:
+                    fully_future_fragments += 1
+                    warp_future_counts[warp] += 1
+
+        expected_columns = set(range(0, key_count, 8))
+        if set(owners) != expected_columns:
+            raise AssertionError("round-robin warps do not own every N8 tile")
+        expected_scores = {
+            (row, column)
+            for row in range(16)
+            for column in range(key_count)
+        }
+        if set(writes) != expected_scores:
+            raise AssertionError("QK fragments do not write the complete score tile")
+        if max(warp_future_counts) - min(warp_future_counts) > 1:
+            raise AssertionError("future suffix is not balanced across QK warps")
+        per_row_block_future_fragments.append(sum(warp_future_counts))
+        per_row_block_warp_future_fragments.append(tuple(warp_future_counts))
+        fully_future_score_coordinates += len(future_writes)
+
+    if fully_future_fragments != 240:
+        raise AssertionError("each Case-13 prefix must skip exactly 240 fragments")
+    return QKFutureSkipPlan(
+        key_count=key_count,
+        total_fragments=total_fragments,
+        live_fragments=total_fragments - fully_future_fragments,
+        fully_future_fragments=fully_future_fragments,
+        score_coordinates_written=16 * 16 * key_count,
+        fully_future_score_coordinates=fully_future_score_coordinates,
+        per_row_block_future_fragments=tuple(per_row_block_future_fragments),
+        per_row_block_warp_future_fragments=tuple(
+            per_row_block_warp_future_fragments
+        ),
+    )
+
+
 def prefix_plan(key_count: int) -> PrefixPlan:
     if key_count not in (256, 512, 768, 1024):
         raise ValueError("Case-13 prefix must be 256, 512, 768, or 1024")
@@ -199,6 +294,9 @@ def verify() -> dict[str, object]:
     return {
         "single_mma": verify_single_mma_fragments(),
         "prefixes": [asdict(prefix_plan(key)) for key in (256, 512, 768, 1024)],
+        "qk_future_skip": [
+            asdict(verify_qk_future_skip(key)) for key in (256, 512, 768, 1024)
+        ],
         "boundaries": verify_boundaries(),
     }
 

@@ -9,6 +9,11 @@ from pathlib import Path
 ORACLE_PATH = (
     Path(__file__).resolve().parents[1] / "research" / "case13_fragment_oracle.py"
 )
+CUDA_SOURCE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "transformer_benchmark"
+    / "case13_exact_attention.cu"
+)
 SPEC = importlib.util.spec_from_file_location("case13_fragment_oracle", ORACLE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 ORACLE = importlib.util.module_from_spec(SPEC)
@@ -56,6 +61,42 @@ class Case13FragmentOracleTest(unittest.TestCase):
         self.assertIn("descending XOR sum", boundaries["softmax"])
         self.assertEqual(boundaries["softmax"][-1], "RNE BF16 probability")
         self.assertEqual(boundaries["pv"][-1], "RNE BF16 context")
+
+    def test_round_robin_future_skip_writes_every_score_once(self) -> None:
+        total_fragments = 0
+        total_future_fragments = 0
+        for key_count in (256, 512, 768, 1024):
+            plan = ORACLE.verify_qk_future_skip(key_count)
+            self.assertEqual(plan.total_fragments, 2 * key_count)
+            self.assertEqual(plan.fully_future_fragments, 240)
+            self.assertEqual(plan.live_fragments, 2 * key_count - 240)
+            self.assertEqual(
+                plan.score_coordinates_written,
+                16 * 16 * key_count,
+            )
+            self.assertEqual(
+                plan.fully_future_score_coordinates,
+                240 * 16 * 8,
+            )
+            self.assertEqual(
+                plan.per_row_block_future_fragments,
+                tuple(range(30, -1, -2)),
+            )
+            for warp_counts in plan.per_row_block_warp_future_fragments:
+                self.assertLessEqual(max(warp_counts) - min(warp_counts), 1)
+            total_fragments += plan.total_fragments
+            total_future_fragments += plan.fully_future_fragments
+        self.assertEqual(total_fragments, 5120)
+        self.assertEqual(total_future_fragments, 960)
+
+    def test_cuda_source_uses_the_proved_skip_schedule(self) -> None:
+        source = CUDA_SOURCE_PATH.read_text()
+        self.assertIn("(fragment * kWarps + warp) * 8", source)
+        self.assertIn("matrix_column > maximum_query_row", source)
+        self.assertIn("store_fully_future_score_fragment<KeyCount>", source)
+        self.assertIn("reduction_start += 16", source)
+        self.assertIn("mma_m16n8k16(score_acc, a, b)", source)
+        self.assertIn("native_softmax_rows<KeyCount>", source)
 
 
 if __name__ == "__main__":

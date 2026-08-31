@@ -103,6 +103,24 @@ store_score_fragment(__half *scores, const float (&acc)[4],
 }
 
 template <int KeyCount>
+__device__ __forceinline__ void
+store_fully_future_score_fragment(__half *scores, int matrix_column,
+                                  int lane) {
+  const int group = lane >> 2;
+  const int thread = lane & 3;
+  const int rows[4] = {group, group, group + 8, group + 8};
+  const int columns[4] = {
+      matrix_column + thread * 2, matrix_column + thread * 2 + 1,
+      matrix_column + thread * 2, matrix_column + thread * 2 + 1};
+  const __half negative_infinity =
+      __float2half_rn(-std::numeric_limits<float>::infinity());
+#pragma unroll
+  for (int index = 0; index < 4; ++index) {
+    scores[rows[index] * KeyCount + columns[index]] = negative_infinity;
+  }
+}
+
+template <int KeyCount>
 __device__ __forceinline__ void native_softmax_rows(unsigned short *storage,
                                                     int warp, int lane) {
   // ATen's persistent template pads 768 to next_power_of_two=1024.  Keeping
@@ -266,8 +284,19 @@ __global__ void case13_exact_attention_kernel(
   // per-output dependency chain without keeping 4*fragments accumulators live.
 #pragma unroll
   for (int fragment = 0; fragment < kFragmentsPerWarp; ++fragment) {
+    // Interleave the independent N8 fragments so the fully-future suffix is
+    // balanced across all eight QK warps.  A complete tile above the causal
+    // diagonal would have been replaced with FP16 -infinity at store time;
+    // write that identical tile directly without issuing its two K16 MMAs.
+    const int matrix_column = (fragment * kWarps + warp) * 8;
+    const int maximum_query_row =
+        RowStart + row_block * kRows + (kRows - 1);
+    if (matrix_column > maximum_query_row) {
+      store_fully_future_score_fragment<KeyCount>(score_half, matrix_column,
+                                                   lane);
+      continue;
+    }
     float score_acc[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    const int matrix_column = (warp * kFragmentsPerWarp + fragment) * 8;
 #pragma unroll
     for (int reduction_start = 0; reduction_start < kHeadDim;
          reduction_start += 16) {
