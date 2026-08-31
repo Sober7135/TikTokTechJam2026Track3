@@ -1833,3 +1833,49 @@
   no material cross-case regression. Cases 2/3 remain above the requested 7x
   level; Case 11 reaches `6.853423x` and Case 12 `6.228437x`, so the wider
   multi-case 7-10x objective remains open.
+
+## I09 small projection/layout E01 - Case-7 HD8 PV into final layout
+
+- Status: preregistered focused candidate from shared I09 commit
+  `15196cbaa9b6139bae1a6b134969a66351d8ef19`.
+- Targets and anchors: exact official CUDA BF16 Cases 7/9/10. I09 candidate
+  medians are `0.498688012 / 0.487423986 / 0.500735998 ms`; their geometric
+  mean is `0.495574782 ms`. Only Case 7 changes in E01. Cases 9/10 remain
+  byte-identical regression anchors so a Case-7 gain must survive the shared
+  runtime and three-case promotion rule.
+- Bottleneck and hypothesis: Case 7 executes two 64-row causal prefixes in
+  each of four layers. Each prefix separately rounds native-softmax FP32
+  probabilities to BF16 and invokes native BF16 PV, after which each layer
+  copies the complete head-major HD8 context into sequence-major projection
+  layout. An exact-shape HD8 PV kernel can fuse only the probability rounding
+  with PV and write both disjoint prefixes directly into the final backing,
+  removing eight cast/native-PV launch pairs and four layout copies per call.
+- Numerical boundary: triangular QK, scale, prefix split, and native FP32
+  softmax are unchanged. E01 explicitly rounds probabilities to BF16 before
+  `tl.dot`, loads BF16 V, accumulates the PV dot in FP32, and rounds context to
+  BF16 before the unchanged output projection. HD8 is padded to 16 output
+  columns with exact zeros; columns 8-15 are masked on load and store, so no
+  live term changes. This follows the separately validated Case-11 HD8 PV
+  boundary without changing that kernel or its dispatch.
+- Dispatch and fallback: only eval plus inference/no-grad CUDA BF16, causal,
+  no effective token mask, exact query/value/context shape `(64,4,128,8)`,
+  exact 64-row prefixes ending at keys 64 and 128, contiguous FP32
+  probabilities, and unit-stride V/context columns use the new kernel. It
+  allocates contiguous `[64,128,4,8]` backing and exposes a strided BHSD view;
+  the following transpose is already contiguous. Cases 9/10, Cases 11/12,
+  training, gradients, masks, CPU, other dtype/shape/layout, and custom calls
+  retain I09 unchanged.
+- Static and CPU validation: `git diff --check`, full facade/package/test
+  compilation, and 25/25 unit tests passed, including exact dispatch,
+  unchanged Case-11 isolation, explicit BF16/dot/store boundary, and
+  sequence-major alias invariants. The prescribed CPU BF16 smoke was bitwise
+  exact at `0 / 128`; it validates fallback only, not CUDA correctness or
+  performance.
+- Preregistered ordinary GPU gate: run official Cases 7/9/10 with five
+  accuracy trials, 20 warmups, 100 repeats, and three alternating rounds.
+  Read timing only if all 15 trials pass strict
+  `abs_error < 0.002 OR abs_error < 0.02 * abs(reference)` correctness. Promote
+  only if the three-case candidate-latency geometric mean improves by at least
+  `0.75%` versus I09 and no case regresses by more than `1.5%`; otherwise
+  retain I09. At most one evidence-specific follow-up is permitted.
+- Ordinary GPU job/snapshot/result/decision: pending.

@@ -262,6 +262,48 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         ].split("context = self._chunked_triangular_context", 1)[0]
         self.assertIn("(64, 128, 128, 16)", direct_write_block)
 
+    def test_case7_dispatches_independent_hd8_pv_into_final_layout(self) -> None:
+        attention = UserOptimizedTransformer(
+            TransformerConfig(64, 128, 32, 4, 32, 4, True)
+        ).layers[0].attention
+        chunk_source = inspect.getsource(attention._chunked_triangular_context)
+        self.assertIn(
+            "use_case7_hd8_pv_kernel = tuple(query.shape) == (64, 4, 128, 8)",
+            chunk_source,
+        )
+        self.assertIn(
+            "if use_hd8_pv_kernel or use_case7_hd8_pv_kernel:",
+            chunk_source,
+        )
+        self.assertIn("bf16_probability_value_hd8_case7", chunk_source)
+
+        from transformer_benchmark.pv_context import (
+            _bf16_probability_value_hd8_case7_kernel,
+            bf16_probability_value_hd8_case7,
+        )
+
+        wrapper_source = inspect.getsource(bf16_probability_value_hd8_case7)
+        kernel_source = inspect.getsource(
+            _bf16_probability_value_hd8_case7_kernel.fn
+        )
+        self.assertIn("(batch, heads, row_count) != (64, 4, 64)", wrapper_source)
+        self.assertIn("key_count not in (64, 128)", wrapper_source)
+        self.assertIn("tuple(value.shape) != (64, 4, 128, 8)", wrapper_source)
+        self.assertIn("num_warps=4", wrapper_source)
+        self.assertIn("num_stages=2", wrapper_source)
+        self.assertIn(".to(tl.bfloat16)", kernel_source)
+        self.assertIn("tl.dot(probabilities, values, out_dtype=tl.float32)", kernel_source)
+        self.assertIn("mask=columns[None, :] < 8", kernel_source)
+
+        sequence_major = torch.empty(64, 128, 4, 8)
+        context = sequence_major.permute(0, 2, 1, 3)
+        self.assertFalse(context.is_contiguous())
+        self.assertTrue(context.transpose(1, 2).is_contiguous())
+        self.assertEqual(
+            tuple(context.transpose(1, 2).view(64, 128, 32).shape),
+            (64, 128, 32),
+        )
+
     def test_cases4_and12_dispatch_full_hd32_pv_to_final_layout(self) -> None:
         attention = UserOptimizedTransformer(
             TransformerConfig(1, 8, 16, 4, 32, 1, True)

@@ -297,3 +297,125 @@ def bf16_probability_value_hd8(
         num_warps=2,
         num_stages=2,
     )
+
+
+@triton.jit
+def _bf16_probability_value_hd8_case7_kernel(
+    probability_ptr,
+    value_ptr,
+    context_ptr,
+    probability_stride_batch: tl.constexpr,
+    probability_stride_head: tl.constexpr,
+    probability_stride_row: tl.constexpr,
+    value_stride_batch: tl.constexpr,
+    value_stride_head: tl.constexpr,
+    value_stride_row: tl.constexpr,
+    context_stride_batch: tl.constexpr,
+    context_stride_head: tl.constexpr,
+    context_stride_row: tl.constexpr,
+    heads: tl.constexpr,
+    row_start: tl.constexpr,
+    key_count: tl.constexpr,
+    block_key_count: tl.constexpr,
+):
+    block_bh = tl.program_id(0)
+    batch_index = block_bh // heads
+    head_index = block_bh % heads
+
+    rows = tl.arange(0, 64)
+    keys = tl.arange(0, block_key_count)
+    columns = tl.arange(0, 16)
+    probability_offsets = (
+        batch_index * probability_stride_batch
+        + head_index * probability_stride_head
+        + rows[:, None] * probability_stride_row
+        + keys[None, :]
+    )
+    value_offsets = (
+        batch_index * value_stride_batch
+        + head_index * value_stride_head
+        + keys[:, None] * value_stride_row
+        + columns[None, :]
+    )
+
+    # Keep the established attention boundary: native softmax produces FP32,
+    # probabilities round to BF16 before PV, the tensor-core dot accumulates
+    # in FP32, and the context rounds to BF16 before the output projection.
+    probabilities = tl.load(
+        probability_ptr + probability_offsets,
+        mask=keys[None, :] < key_count,
+        other=0.0,
+    ).to(tl.bfloat16)
+    values = tl.load(
+        value_ptr + value_offsets,
+        mask=(keys[:, None] < key_count) & (columns[None, :] < 8),
+        other=0.0,
+    )
+    accumulator = tl.dot(probabilities, values, out_dtype=tl.float32)
+    context = accumulator.to(tl.bfloat16)
+
+    context_offsets = (
+        batch_index * context_stride_batch
+        + head_index * context_stride_head
+        + (row_start + rows[:, None]) * context_stride_row
+        + columns[None, :]
+    )
+    tl.store(
+        context_ptr + context_offsets,
+        context,
+        mask=columns[None, :] < 8,
+    )
+
+
+def bf16_probability_value_hd8_case7(
+    probabilities: torch.Tensor,
+    value: torch.Tensor,
+    context: torch.Tensor,
+    row_start: int,
+) -> None:
+    """Write one exact case-7 BF16 PV prefix into final context layout."""
+    if probabilities.device.type != "cuda" or probabilities.dtype != torch.float32:
+        raise ValueError("probabilities must be a CUDA FP32 tensor")
+    if value.device != probabilities.device or value.dtype != torch.bfloat16:
+        raise ValueError("value must be a CUDA BF16 tensor on the same device")
+    if context.device != value.device or context.dtype != torch.bfloat16:
+        raise ValueError("context must be a CUDA BF16 tensor on the same device")
+    if probabilities.ndim != 4 or value.ndim != 4 or context.ndim != 4:
+        raise ValueError("probabilities, value, and context must be rank-4 tensors")
+
+    batch, heads, row_count, key_count = probabilities.shape
+    if (batch, heads, row_count) != (64, 4, 64):
+        raise ValueError("case-7 HD8 PV kernel requires a 64x4x64 prefix")
+    if key_count not in (64, 128):
+        raise ValueError("case-7 prefix key count must be 64 or 128")
+    if tuple(value.shape) != (64, 4, 128, 8):
+        raise ValueError("case-7 HD8 PV kernel requires the exact value shape")
+    if tuple(context.shape) != tuple(value.shape):
+        raise ValueError("context and value shapes must match")
+    if row_start not in (0, 64) or row_start + row_count != key_count:
+        raise ValueError("case-7 row and key prefixes must end together")
+    if not probabilities.is_contiguous():
+        raise ValueError("case-7 HD8 PV kernel requires contiguous probabilities")
+    if value.stride(-1) != 1 or context.stride(-1) != 1:
+        raise ValueError("case-7 HD8 PV kernel requires unit-stride columns")
+
+    _bf16_probability_value_hd8_case7_kernel[(batch * heads,)](
+        probabilities,
+        value,
+        context,
+        probability_stride_batch=probabilities.stride(0),
+        probability_stride_head=probabilities.stride(1),
+        probability_stride_row=probabilities.stride(2),
+        value_stride_batch=value.stride(0),
+        value_stride_head=value.stride(1),
+        value_stride_row=value.stride(2),
+        context_stride_batch=context.stride(0),
+        context_stride_head=context.stride(1),
+        context_stride_row=context.stride(2),
+        heads=heads,
+        row_start=row_start,
+        key_count=key_count,
+        block_key_count=triton.next_power_of_2(key_count),
+        num_warps=4,
+        num_stages=2,
+    )
