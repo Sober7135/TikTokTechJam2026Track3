@@ -2043,3 +2043,28 @@
   other dispatch are byte-identical to E01/I10 as applicable. Diff-check,
   complete compilation, 26/26 unit tests, and CPU BF16 fallback at `0 / 128`
   failures pass before the final GPU submission.
+- E02 deterministic result: final ordinary job
+  `job-1788146941086-39fff544029cd5dc` evaluated implementation
+  `9badbbb768106c30d16a5f641fd3f147c51543ae` in immutable snapshot
+  `618b329215f1be1306de9dacbd2246d58f78d7204c2bff12d46542aba7cb54e5`.
+  It executed exactly Cases 6/13 with pinned Python and CUDA BF16 on RTX 4070;
+  state succeeded, exit zero, no error, complete result, and 300 samples per
+  implementation/case.
+- Correctness passed before timing interpretation. All ten trials were bitwise
+  exact under the strict OR rule: `0 / 861,143,040` failures and zero maximum
+  absolute/relative error. This both reproduces Case 6's E01 equivalence and
+  confirms the Case-13 prune restored I10 behavior.
+- Same-job baseline/candidate medians and speedups were Case 6
+  `414.221313477 / 164.272125244 ms / 2.521555698x` and Case 13
+  `110.914237976 / 34.675712585 ms / 3.198614526x`. Against I10, Case 6
+  improves `0.955295%`, clearing the E02 `0.75%` gate; Case 13 regresses only
+  `0.126984%`, inside the `1.0%` guard.
+- Candidate round medians were Case 6
+  `164.270080566 / 164.273147583 / 164.276741028 ms` and Case 13
+  `34.672641754 / 34.678783417 / 34.675712585 ms`, with stable narrow spreads.
+  The two-case candidate geomean improves `0.412697%`; their summed medians
+  improve `200.473088000 -> 198.947837830 ms` (`0.766658%`).
+- Decision: focused `promote` E02. It passes all final correctness, Case-6
+  improvement, Case-13 guard, and stability gates. The route has exhausted its
+  follow-up; integrate its auditable E01/result/E02/result commits into I10 and
+  require a new ordinary unified Cases 1-13 job before a shared-winner claim.
