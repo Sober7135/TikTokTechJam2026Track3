@@ -334,7 +334,7 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         )
         self.assertIn("num_warps = 8 if row_count == 128 else 4", wrapper_source)
 
-    def test_cases6_and11_consolidate_complete_score_key_prefix(self) -> None:
+    def test_cases6_and11_use_one_adaptive_score_key_tile_per_prefix(self) -> None:
         from transformer_benchmark.triangular_scores import (
             triangular_causal_score_chunk,
         )
@@ -342,7 +342,14 @@ class UserOptimizedTransformerTests(unittest.TestCase):
         source = inspect.getsource(triangular_causal_score_chunk)
         self.assertIn("(10000, 4, 128, 32)", source)
         self.assertIn("(64, 16, 128, 8)", source)
-        self.assertIn("if use_consolidated_key_tile else block_query_size", source)
+        self.assertIn("if row_stop <= 16", source)
+        self.assertIn("block_key_size = 16", source)
+        self.assertIn("elif row_stop <= 32", source)
+        self.assertIn("block_key_size = 32", source)
+        self.assertIn("elif row_stop <= 64", source)
+        self.assertIn("block_key_size = 64", source)
+        self.assertIn("block_key_size = 128", source)
+        self.assertIn("block_key_size = block_query_size", source)
         self.assertIn("triton.cdiv(row_stop, block_key_size)", source)
         self.assertIn("block_query_size=block_query_size", source)
         self.assertIn("block_key_size=block_key_size", source)

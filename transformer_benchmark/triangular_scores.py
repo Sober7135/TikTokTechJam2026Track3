@@ -206,15 +206,25 @@ def triangular_causal_score_chunk(
         raise ValueError("score chunk row boundaries must be tile-aligned")
 
     # The broad S=128 experiment showed stable end-to-end gains only for the
-    # exact case-6 and case-11 query shapes.  Keep their complete key-prefix
-    # tile while restoring the proven square tile for every sibling shape.
-    # QK still reduces only over head_dim, so this independent output-column
-    # choice does not split, pad, or reassociate the dot reduction.
+    # exact case-6 and case-11 query shapes when each prefix used one key CTA.
+    # Preserve that single-CTA property while avoiding a full 128-column tile
+    # for short early prefixes. QK still reduces only over head_dim, so this
+    # independent output-column choice does not split or reassociate the dot.
     use_consolidated_key_tile = tuple(query.shape) in {
         (10000, 4, 128, 32),
         (64, 16, 128, 8),
     }
-    block_key_size = 128 if use_consolidated_key_tile else block_query_size
+    if use_consolidated_key_tile:
+        if row_stop <= 16:
+            block_key_size = 16
+        elif row_stop <= 32:
+            block_key_size = 32
+        elif row_stop <= 64:
+            block_key_size = 64
+        else:
+            block_key_size = 128
+    else:
+        block_key_size = block_query_size
 
     scores = torch.empty(
         (batch, heads, row_count, row_stop),
