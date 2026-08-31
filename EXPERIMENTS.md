@@ -2068,3 +2068,57 @@
   improvement, Case-13 guard, and stability gates. The route has exhausted its
   follow-up; integrate its auditable E01/result/E02/result commits into I10 and
   require a new ordinary unified Cases 1-13 job before a shared-winner claim.
+
+## Winner integration I11 - Case-6 reduced chunk geometry
+
+- Integrated history: I10 plus auditable E01/result/E02/result commits
+  `46021db / 8809977 / 1903e4a / 0ac31c2`. The net runtime difference from
+  I10 is only exact Case 6 `(10000,128,128,H4)` chunk size `64 -> 32`; exact
+  Case 13 is restored to I10's 256 rows. Diff-check, complete compilation,
+  26/26 unit tests, and CPU BF16 fallback (`0 / 128`) passed before GPU use.
+- Unified deterministic identity: ordinary job
+  `job-1788147316206-f1b67fdd1f5bb752` evaluated immutable snapshot
+  `56aa1ab1aee54880b462b82d1ea08f93130610f304f075281d9496aff45ab9b1`
+  from base `0ac31c2364e5f11f09c3d3fe9315ef281860df14`. It records exactly official
+  Cases 1-13, CUDA BF16, pinned Python 3.12.14, RTX 4070, PyTorch
+  2.13.0+cu130/CUDA 13.0, state succeeded, exit zero, and no error.
+- Correctness passed before performance interpretation. All 13 cases and all
+  65 trials were bitwise exact under the strict OR rule:
+  `0 / 938,885,120` failures, zero maximum absolute/relative error, complete
+  output, and 300 baseline plus 300 candidate samples per case.
+- Same-job baseline/candidate medians and paired speedups were:
+
+  | Case | Baseline ms | Candidate ms | Speedup |
+  |---:|---:|---:|---:|
+  | 1 | 1.422336 | 0.577536 | 2.462766x |
+  | 2 | 0.961344 | 0.098304 | 9.779297x |
+  | 3 | 0.956768 | 0.126976 | 7.535030x |
+  | 4 | 0.960144 | 0.211968 | 4.529665x |
+  | 5 | 3.223552 | 1.171456 | 2.751748x |
+  | 6 | 414.051056 | 164.407303 | 2.518447x |
+  | 7 | 1.103072 | 0.459776 | 2.399151x |
+  | 8 | 11.695104 | 10.897408 | 1.073201x |
+  | 9 | 0.872448 | 0.487424 | 1.789916x |
+  | 10 | 1.110720 | 0.500736 | 2.218175x |
+  | 11 | 7.278592 | 1.061888 | 6.854388x |
+  | 12 | 0.956496 | 0.154624 | 6.185948x |
+  | 13 | 110.906364 | 34.628609 | 3.202738x |
+
+- The changed Case 6 reproduces the focused win in all unified rounds:
+  `164.404220581 / 164.406265259 / 164.410369873 ms`. Its aggregate improves
+  `0.872288%` from I10 `165.841408 ms`. Unchanged per-case movements are
+  ordinary cross-job observations and are not attributed to the dispatch.
+- Aggregate denominators remain separate. Equal-case paired-speedup geomean is
+  `3.393298332x`. Baseline/candidate median sums are
+  `555.497996122 / 214.784007043 ms`, a same-job total speedup of
+  `2.586309864x`. Aggregate MFU is `16.127151669%` using the established
+  `F=L*(8BSD^2 + 4BS^2D + 4BSDF)` convention and 58.25e12 peak.
+- Versus I10, candidate median sum improves
+  `216.230399534 -> 214.784007043 ms` (`0.673417%` old/new), and candidate
+  latency geomean improves `1.058589026 -> 1.056623818 ms`
+  (`0.185989%`). Both shared-winner objectives improve despite normal
+  unmodified-case noise.
+- Decision: promote I11 as the shared winner. Matrix-wide strict correctness,
+  the changed Case-6 stable gain, candidate geomean, candidate sum, total
+  speedup, and MFU all improve. Only Cases 2/3 remain at or above 7x; the
+  broader multi-case 7-10x objective remains open.
