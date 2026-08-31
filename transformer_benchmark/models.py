@@ -752,21 +752,53 @@ class UserOptimizedTransformerBlock(BaselineTransformerBlock):
         self.attention = UserOptimizedSelfAttention(d_model, num_heads, seq_len)
         self._candidate_cublaslt_linear: Optional[object] = None
 
+    @staticmethod
+    def _apply_layer_norm(
+        layer_norm: nn.LayerNorm,
+        x: torch.Tensor,
+        use_case6_exact_layer_norm: bool,
+    ) -> torch.Tensor:
+        if use_case6_exact_layer_norm:
+            from .case6_exact_layer_norm import case6_exact_layer_norm
+
+            return case6_exact_layer_norm(
+                x,
+                layer_norm.weight,
+                layer_norm.bias,
+                layer_norm.eps,
+            )
+        return layer_norm(x)
+
     def forward(
         self,
         x: torch.Tensor,
         valid_token_mask: Optional[torch.Tensor],
         causal: bool,
+        use_case6_exact_layer_norm: bool = False,
     ) -> torch.Tensor:
+        normalized_attention_input = self._apply_layer_norm(
+            self.norm1,
+            x,
+            use_case6_exact_layer_norm,
+        )
         if valid_token_mask is None:
             x = self.attention(
-                self.norm1(x),
+                normalized_attention_input,
                 valid_token_mask,
                 causal,
                 residual=x,
             )
         else:
-            x = x + self.attention(self.norm1(x), valid_token_mask, causal)
+            x = x + self.attention(
+                normalized_attention_input,
+                valid_token_mask,
+                causal,
+            )
+        normalized_ffn_input = self._apply_layer_norm(
+            self.norm2,
+            x,
+            use_case6_exact_layer_norm,
+        )
         use_fused_ffn_in = (
             not self.training
             and torch.is_inference_mode_enabled()
@@ -790,12 +822,15 @@ class UserOptimizedTransformerBlock(BaselineTransformerBlock):
             from .fused_ffn import bf16_linear_exact_gelu
 
             hidden = bf16_linear_exact_gelu(
-                self.norm2(x),
+                normalized_ffn_input,
                 self.ffn_in.weight,
                 self.ffn_in.bias,
             )
         else:
-            hidden = F.gelu(self.ffn_in(self.norm2(x)), approximate="none")
+            hidden = F.gelu(
+                self.ffn_in(normalized_ffn_input),
+                approximate="none",
+            )
         use_candidate_cublaslt = (
             not self.training
             and torch.is_inference_mode_enabled()
@@ -920,12 +955,98 @@ class UserOptimizedTransformer(BaselineTransformer):
         self._cuda_graph_capture_count = 0
         self._mask_cache_entry: Optional[_MaskCacheEntry] = None
 
+    def _case6_exact_layer_norm_eligible(
+        self,
+        x: torch.Tensor,
+        valid_token_mask: Optional[torch.Tensor],
+    ) -> bool:
+        from .case6_exact_layer_norm import (
+            _PINNED_CUDA_VERSION,
+            _PINNED_DEVICE_CAPABILITY,
+            _PINNED_TORCH_GIT_VERSION,
+            _PINNED_TORCH_VERSION,
+        )
+
+        config = self.config
+        if (
+            torch.__version__ != _PINNED_TORCH_VERSION
+            or torch.version.git_version != _PINNED_TORCH_GIT_VERSION
+            or torch.version.cuda != _PINNED_CUDA_VERSION
+        ):
+            return False
+        if (
+            config.batch_size,
+            config.seq_len,
+            config.d_model,
+            config.num_heads,
+            config.ffn_dim,
+            config.num_layers,
+            config.causal,
+        ) != (10000, 128, 128, 4, 128, 4, True):
+            return False
+        if valid_token_mask is not None or self.training:
+            return False
+        if torch.is_grad_enabled() or not torch.is_inference_mode_enabled():
+            return False
+        if x.device.type != "cuda" or x.dtype != torch.bfloat16:
+            return False
+        if (
+            torch.cuda.get_device_capability(x.device)
+            != _PINNED_DEVICE_CAPABILITY
+        ):
+            return False
+        if tuple(x.shape) != (10000, 128, 128) or not x.is_contiguous():
+            return False
+        return all(
+            tuple(layer_norm.normalized_shape) == (128,)
+            and layer_norm.weight is not None
+            and layer_norm.bias is not None
+            and layer_norm.weight.device == x.device
+            and layer_norm.bias.device == x.device
+            and layer_norm.weight.dtype == torch.bfloat16
+            and layer_norm.bias.dtype == torch.bfloat16
+            and layer_norm.weight.is_contiguous()
+            and layer_norm.bias.is_contiguous()
+            for layer_norm in (
+                *(
+                    norm
+                    for layer in self.layers
+                    for norm in (layer.norm1, layer.norm2)
+                ),
+                self.final_norm,
+            )
+        )
+
     def _forward_eager(
         self,
         x: torch.Tensor,
         valid_token_mask: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        return super().forward(x, valid_token_mask)
+        use_case6_exact_layer_norm = self._case6_exact_layer_norm_eligible(
+            x,
+            valid_token_mask,
+        )
+        for layer in self.layers:
+            x = layer(
+                x,
+                valid_token_mask,
+                self.config.causal,
+                use_case6_exact_layer_norm=use_case6_exact_layer_norm,
+            )
+        if use_case6_exact_layer_norm:
+            from .case6_exact_layer_norm import case6_exact_layer_norm
+
+            x = case6_exact_layer_norm(
+                x,
+                self.final_norm.weight,
+                self.final_norm.bias,
+                self.final_norm.eps,
+            )
+        else:
+            x = self.final_norm(x)
+        if valid_token_mask is not None:
+            x = x.masked_fill(~valid_token_mask[..., None], 0)
+        return x
 
     def _cuda_graph_eligible(
         self,

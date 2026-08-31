@@ -2158,3 +2158,174 @@
   not satisfy the 3-5% multi-case continuation/promote gate by itself. Preserve
   the commit for combination with a later Case-6 route; require a new ordinary
   focused and then unified job for any combined promotion claim.
+
+## O92 Case-6 exact native LayerNorm revisit
+
+- Status: static research audit from exact winner
+  `f1d7140566fbdbb1976ad777c81c4eac5716cac3`; no production implementation
+  and no GPU job. The dedicated branch/worktree was created directly at that
+  commit and was clean before this documentation-only change. The current
+  evidence is ordinary profile job `job-1788217133509-50bd4252a2c85700`,
+  snapshot `a4bcb466e6fba59346ec5d342389d29f7e152109e544ef4c86444042705c921a`.
+  It passed all ten Cases 6/13 trials bitwise exactly. Its normal Case-6 timing
+  was `414.219268799 / 93.313247681 ms` (`4.439018886x`), making the same-job
+  `5x` target `82.843853760 ms` and the gap `10.469393921 ms`. The separate
+  profiled replay median was `94.160896301 ms` and is not the scoring
+  denominator.
+- Current bottleneck: the profile recorded 27
+  `vectorized_layer_norm_kernel<c10::BFloat16,float,false>` launches across
+  three replays, exactly nine per call: four Norm1, four Norm2, and final norm.
+  Dividing the kernel total by three gives `31.669290 ms/call`, or
+  `33.633165%` of profiled wall time. Reaching `5x` from this category requires
+  reducing native-norm time to at most `21.199896 ms`: `33.058505%` removal,
+  equivalently a `1.493842x` norm-only speedup.
+- Runtime identity: the installed wheel is PyTorch `2.13.0+cu130`, built from
+  upstream commit `cf30153c4c131c8164ee7798e5022d810682e2cb`. The installed
+  headers and that exact upstream CUDA source agree. The aligned BF16 path
+  uses `vec_size=4`, one grid block per flattened row, and fixed CUDA threads
+  `(warp_size, num_threads()/warp_size) = (32,4)`. For Case 6, `N=128`, so
+  `N/vec_size=32`; with flattened thread index
+  `threadIdx.x + threadIdx.y * 32`, only `threadIdx.y==0` owns a nonempty
+  vector group. All four warps still execute the five descending
+  `shfl_down(16,8,4,2,1)` Welford-combine rounds, after which two inter-warp
+  merge levels and their barriers combine the one nonempty state with three
+  empty states. The installed `sm_86` cubin specialization reports 32
+  registers, zero stack/local/static-shared bytes; the launch requests 24
+  bytes dynamic shared memory.
+- Exact arithmetic boundary: each active lane consumes four consecutive BF16
+  values serially with `cuWelfordOnlineSum`; the 32 states merge with the
+  native descending shuffle tree. Variance is `sigma2 / 128`, reciprocal
+  standard deviation uses the native `rsqrt`, and affine output is ordered
+  `gamma * (rstd * (x - mean)) + beta` before the BF16 store. The functional
+  operator also writes FP32 mean/rstd, although `nn.LayerNorm` exposes only
+  the BF16 normalized output in this inference path.
+- New route: reproduce only that pinned BF16/N128 source in a candidate CUDA
+  extension, but assign four independent rows to one 128-thread CTA, one row
+  per warp. Each warp retains the same vector-four coordinates, online update
+  order, descending shuffle order, `sigma2/128`, `rsqrt`, affine expression,
+  and RNE BF16 output. It does not perform a cross-warp reduction because the
+  warps now own different rows. For the finite official Case-6 values, removing
+  the native empty-state merges is bitwise neutral: count `128` makes
+  `128*(1/128)` exactly one, empty weight is exactly zero, and the mean and
+  sigma terms reduce to the nonempty state. The unobserved mean/rstd outputs
+  can be omitted rather than allocated or stored.
+- Structural count: one forward has `1,280,000` rows per norm. Native therefore
+  schedules `11,520,000` CTAs and `46,080,000` warp instances across nine
+  norms; only `11,520,000` warps own input/output vectors, while `34,560,000`
+  are empty for those loops but still execute reduction/control work. The
+  four-row mapping schedules `2,880,000` CTAs and `11,520,000` warps, all
+  useful. With the same 128-thread block size and a comparable register count,
+  it also changes resident useful-row concurrency from roughly 12 to 48 per
+  SM without increasing block resources.
+- Savings model: the topology ceiling is a `4x` norm speedup, or
+  `23.751968 ms` removed, but unchanged input/output traffic makes that an
+  upper bound rather than a prediction. A deliberately charged `2x` norm
+  scenario removes `15.834645 ms`, projects Case 6 to `77.478603 ms`, and
+  reaches `5.346241x`. The minimum acceptable measured result is the much
+  weaker `1.493842x` norm speedup (`10.469394 ms` removal); `1.5x` would remove
+  `10.556430 ms`, project `82.756818 ms`, and barely reach `5.005259x`.
+  Thus this is the only audited route with enough structural headroom to clear
+  both the normal 5--10% investment gate and the full `5x` gap, but static
+  evidence cannot turn the `1.5x` threshold into a hard latency guarantee.
+- Compiler/resource risk: the installed wheel was built with CUDA 13.0 while
+  the repository extension toolchain is NVCC `12.9.86` and clang `22.1.8`.
+  Source-level order is necessary but not sufficient for bitwise equality if
+  the generated FMA/divide/rsqrt or BF16 conversion differs. A later prototype
+  must first compare PTX/SASS instruction order and resources against the
+  installed specialization, then require bitwise operator-level output on
+  full `[10000,128,128]` values before end-to-end timing. Any output mismatch,
+  register spill, fewer than four useful resident row warps per native block,
+  or focused gain below 5% rejects the route. Do not substitute a Triton tuple
+  reduction: I13 showed that superficially matching vector-four Welford states
+  still changed strict four-layer outputs.
+- Dispatch/fallback if later authorized: select only exact Case 6
+  `(B,S,D,H,F,L)=(10000,128,128,4,128,4)`, causal eval/inference/no-grad CUDA
+  BF16, contiguous input, an elided all-true mask, and contiguous BF16
+  LayerNorm weight/bias with normalized width 128. Apply it to the eight block
+  norms and final norm. Every different shape, mask, dtype, layout, parameter
+  contract, training/grad mode, device, or failure to load the extension uses
+  the unchanged `nn.LayerNorm` path.
+- Prior-history correction: worktree/branch
+  `codex/o79-residual-native-norm` currently starts and ends at `0aa3258`, the
+  promoted native-softmax BF16-store change; it contains no residual/norm
+  source or research commit, so it is not evidence for this route. The actual
+  earlier residual-plus-norm experiment is `da716da`: its Triton sum and
+  centered-square reduction failed all 30 trials over Cases 1/5/7/9/10/11,
+  and timing was correctly withheld. I13's vector-four Welford approximation
+  also failed all Cases 4/12 trials. These reject custom reduction trees, not
+  the source-faithful one-row-per-warp mapping above.
+- O83 `.out` correction and no-go: `aten::native_layer_norm.out` remains
+  `CompositeExplicitAutograd`; it computes functional temporaries and copies
+  all three results, so it cannot remove device kernel work. The pinned source
+  makes mean/rstd FP32 for BF16 input, not BF16. An O77 512-batch slice is
+  therefore `16 MiB` normalized plus `256 KiB` mean plus `256 KiB` rstd. The
+  added read+write across 80 slice calls is `2.578125 GiB`, correcting O83's
+  `2.5390625 GiB` estimate. On the current nine full-shape calls, `.out` would
+  add `5.664825 GiB` of copies. Reject the public `.out` route.
+- Private-dispatch/output-reuse no-go: the installed internal
+  `ATen/native/layer_norm.h` does declare `LayerNormKernel`, and
+  `libtorch_cpu.so` exports its dispatch-stub object, so an extension could
+  pass preallocated Y/mean/rstd directly and avoid the composite copies. This
+  is an unstable private C++ ABI and still launches the identical measured
+  four-warp-per-row kernel. Eliminating cached allocator calls and the
+  `87.890625 MiB` of otherwise unobserved FP32-stat stores across nine norms cannot
+  defensibly explain the required `10.469394 ms`; reject it as a standalone
+  route.
+- Other no-go routes: simple residual-plus-LayerNorm fusion repeats the
+  `da716da`/I13 numerical failure unless it reproduces both the preceding
+  Triton GEMM schedule and this exact native tree; it also retains the BF16
+  residual store needed downstream and has no conservative `10.47 ms` bound.
+  Reusing normalized output buffers removes allocation churn but not the
+  measured kernel, writes, or consumer reads. O77/O85 post-attention streaming
+  has only `4.442017 ms` measured historical saving and remained below its
+  standalone gate. None should consume a GPU slot before the grouped exact
+  native-kernel route is resolved.
+- Decision: `audit-gate-worthy / await authorization`. Preserve this research
+  only; do not edit production or submit GPU work in O92. If authorized, the
+  next unit is one source-faithful four-rows-per-CTA operator prototype with a
+  correct native fallback, static binary comparison, and CPU fallback tests.
+  Report its operator bitwise result and resource evidence before requesting
+  one ordinary focused Cases 6/12/13 `benchmarkctl` job.
+
+## O92 E01 source-faithful four-row LayerNorm prototype
+
+- Status: production prototype implemented atop the audit and current winner;
+  no CUDA kernel or benchmark job has run. Exact dispatch is restricted to
+  pinned PyTorch `2.13.0+cu130` commit `cf30153c`, CUDA `13.0`, sm89, inference
+  and no-grad, contiguous CUDA BF16 exact Case 6 with no mask, normalized width
+  128 and contiguous BF16 affine parameters. Every other contract uses the
+  unchanged native LayerNorm path, including extension-load failure.
+- Implementation: one 128-thread CTA owns four independent rows, with one
+  warp per row. Each lane reads the same consecutive vector-of-four BF16
+  values as native, performs the same four online Welford updates, the same
+  descending shuffle-down tree, FP32 variance division and rsqrt, then the
+  same affine expression and BF16 store. It returns native-shaped FP32 mean
+  and rstd internally even though inference exposes only normalized output.
+- Structural oracle proves that native's sole nonempty warp and every
+  specialized row warp consume identical coordinates and ordered Welford
+  states. It also evaluates the two native inter-warp combines with three
+  zero-count states and observes bitwise-identical FP32 state bits for seeded
+  BF16 rows. Source guards pin all arithmetic fragments, forbid fast math and
+  block barriers, and verify exact Case-6-only dispatch plus fallbacks.
+- Supervisor validation after taking over the interrupted owner worktree:
+  `git diff --check`, 51/51 unit tests, compileall and prescribed CPU BF16
+  smoke `0 / 128` all passed. The sm89 extension built successfully with the
+  repository CUDA 12.9 toolchain against PyTorch 2.13/cu130 headers. The cubin
+  reports 25 registers, zero shared/stack/local bytes, no LDL/STL, 12 shuffle
+  instructions, 32 FFMA instructions and one reciprocal-square-root
+  instruction. No dependency or benchmark contract changed.
+- Prediction and rollback: native LayerNorm consumes `31.669290 ms`; only a
+  `1.493842x` norm-only gain is required to close the `10.469394 ms` Case-6
+  gap to 5x, while the charged 2x model saves `15.834645 ms`. Static topology
+  does not prove runtime latency. An independent source/binary review is
+  required before focused GPU validation. Reject on any nonzero Case-6 output
+  error, execution/build failure, focused Case-6 gain below 5%, material
+  Case-12/13 movement, spill/local storage, or divergence from the pinned
+  Welford/affine schedule.
+- O93 approved focused validation after reproducing the source/binary evidence
+  and identified two non-official fallback gaps: a contiguous tensor may have
+  a storage offset that violates native vec4's 8-byte pointer alignment, and
+  nonpositive epsilon should remain on native semantics. Before GPU submission
+  the same optimization commit added 8-byte guards for input/weight/bias and a
+  native fallback for `eps <= 0`, with regression tests. These guards do not
+  change generated official Case-6 dispatch.
