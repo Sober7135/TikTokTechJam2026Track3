@@ -1529,7 +1529,8 @@
   focused GPU job identity and result are pending.
 ## Cases-4/12 full HD32 PV launch E01 - row split and warp specialization
 
-- Status: pre-GPU candidate from I08 implementation `089d2b0`; the I08 audit
+- Status: focused `promote`; no shape-prune follow-up is needed. The candidate
+  starts from I08 implementation `089d2b0`; the I08 audit
   head is `a43ec01`. The comparable unified job is
   `job-1788135136705-0ad3283d01e0b2e4`, snapshot
   `93c6cebc1cd3d33c1a4219ab19947663cf5ecc174e4cfbb0e59c0aaf1ba65258`.
@@ -1697,3 +1698,37 @@
   The one-parameter result supports the two-warp small-accumulator hypothesis;
   no config-prune follow-up is needed. This partial-case result is not a full
   matrix performance claim.
+## Cases-4/12 full HD32 PV launch E01 deterministic review
+
+- Focused ordinary job/snapshot:
+  `job-1788135727706-d92485b8ecce4900` /
+  `59184d0f31621734ead631a2fcf72bb611623c3e0909ec9be13f1e3ba5867b3d`;
+  submitted implementation commit
+  `cdb5ccb3dbd3f19eee73af8436a87eaec746bb3b`. Job identity matches this
+  worktree and snapshot. It ran only requested Cases 4/12 on RTX 4070 with
+  Python 3.12.14, PyTorch 2.13.0+cu130/CUDA 13.0, CUDA BF16, five accuracy
+  trials, 20 warmups, 100 repeats, and three alternating rounds. The job
+  completed both requested cases, exited zero, and has no failure category.
+- Correctness passed before timing interpretation. All 10 trials were bitwise
+  exact under the strict OR rule: `0 / 2,621,440` failed elements, with zero
+  maximum absolute and relative error. Both structured case records report
+  `status=succeeded` and `correctness_passed=true`.
+- Same-job medians and paired speedups: Case 4 baseline/candidate
+  `0.954512000 / 0.211968005 ms` (`4.503094707x`); Case 12
+  `0.956384003 / 0.153600007 ms` (`6.226458058x`). Each side contains 300 raw
+  samples. Baseline round medians are
+  `0.952319980 / 0.953855991 / 0.956496000 ms` for Case 4 and
+  `0.955712020 / 0.956863999 / 0.955888003 ms` for Case 12. Candidate round
+  medians are `0.211071998 / 0.210975997 / 0.212384000 ms` and
+  `0.153600007 / 0.153600007 / 0.153600007 ms`, respectively.
+- Against I08 candidate medians, Case 4 changes
+  `0.220159993 -> 0.211968005 ms` (`+3.864728%` old/new), and Case 12 changes
+  `0.154624000 -> 0.153600007 ms` (`+0.666662%` old/new). Neither case
+  regresses, so the `<=1.5%` per-case gate passes.
+- The equal-case candidate-latency geometric mean changes
+  `0.184504793 -> 0.180439151 ms`, an old/new improvement of `2.253193%`.
+  This exceeds the preregistered `0.75%` gate. Decision: `promote` E01 as a
+  focused winner for later integration and unified validation. The Case-4
+  row split and Case-12 warp specialization both improve their independently
+  dispatched shapes, so the single permitted shape-prune follow-up is not
+  submitted.
