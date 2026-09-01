@@ -6,10 +6,11 @@ import argparse
 import gc
 import json
 import math
+import os
 import platform
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
 import torch.nn as nn
@@ -21,7 +22,27 @@ from .models import (
     UserOptimizedTransformer,
     copy_model_weights,
 )
+from .profiling import (
+    PROFILE_CANDIDATE_REPLAYS,
+    PROFILE_MAX_CASES,
+    PROFILE_MAX_EVENTS,
+    PROFILE_WARMUP_REPLAYS,
+    profile_candidate,
+)
 from .timing import benchmark_models
+
+
+NIXOS_LIBCUDA_DIRECTORY = Path("/run/opengl-driver/lib")
+
+
+def configure_triton_driver_path(
+    driver_directory: Path = NIXOS_LIBCUDA_DIRECTORY,
+) -> None:
+    """Point Triton's supported driver lookup at the NixOS driver directory."""
+    if "TRITON_LIBCUDA_PATH" in os.environ:
+        return
+    if driver_directory.joinpath("libcuda.so.1").is_file():
+        os.environ["TRITON_LIBCUDA_PATH"] = str(driver_directory)
 
 
 def resolve_device(device_arg: str) -> torch.device:
@@ -56,7 +77,7 @@ def maybe_compile(model: nn.Module, enabled: bool, mode: str) -> nn.Module:
     return torch.compile(model, mode=mode)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Compare a baseline and optimized PyTorch Transformer"
     )
@@ -101,6 +122,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repeats", type=int, default=100)
     parser.add_argument("--benchmark-rounds", type=int, default=3)
     parser.add_argument("--benchmark-on-failure", action="store_true")
+    parser.add_argument(
+        "--profile-candidate",
+        action="store_true",
+        help=(
+            "after correctness and normal timing, collect a bounded candidate-only "
+            "CPU/CUDA profile for an explicit focused official-case list"
+        ),
+    )
 
     parser.add_argument("--compile-baseline", action="store_true")
     parser.add_argument("--compile-user", action="store_true")
@@ -126,7 +155,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="write a versioned machine-readable result to this path",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def validate_args(
@@ -147,6 +176,21 @@ def validate_args(
             "the full official matrix requires CUDA; use --official-cases for a "
             "CPU subset or --no-official-matrix for a custom CPU smoke test"
         )
+    if getattr(args, "profile_candidate", False):
+        if not args.official_matrix or args.official_cases is None:
+            raise ValueError(
+                "--profile-candidate requires an explicit focused --official-cases list"
+            )
+        if len(args.official_cases) > PROFILE_MAX_CASES:
+            raise ValueError(
+                f"--profile-candidate accepts at most {PROFILE_MAX_CASES} focused cases"
+            )
+        if device.type != "cuda":
+            raise ValueError("--profile-candidate requires a CUDA device")
+        if args.benchmark_on_failure:
+            raise ValueError(
+                "--profile-candidate cannot be combined with --benchmark-on-failure"
+            )
     if not 0.0 <= args.padding_ratio < 1.0:
         raise ValueError("padding_ratio must be in [0, 1)")
     if args.input_scale <= 0:
@@ -172,11 +216,12 @@ def environment_metadata(device: torch.device, dtype: torch.dtype) -> Dict[str, 
         "torch_version": torch.__version__,
         "cuda_version": torch.version.cuda,
         "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
+        "pytorch_cuda_alloc_conf": os.environ.get("PYTORCH_CUDA_ALLOC_CONF"),
     }
 
 
 def settings_metadata(args: argparse.Namespace) -> Dict[str, object]:
-    return {
+    settings: Dict[str, object] = {
         "seed": args.seed,
         "padding_ratio": args.padding_ratio,
         "input_scale": args.input_scale,
@@ -193,6 +238,13 @@ def settings_metadata(args: argparse.Namespace) -> Dict[str, object]:
         "compile_baseline": args.compile_baseline,
         "compile_user": args.compile_user,
     }
+    if getattr(args, "profile_candidate", False):
+        settings["candidate_profile"] = {
+            "warmup_replays": PROFILE_WARMUP_REPLAYS,
+            "profiled_replays": PROFILE_CANDIDATE_REPLAYS,
+            "event_limit": PROFILE_MAX_EVENTS,
+        }
+    return settings
 
 
 def json_safe(value: Any) -> Any:
@@ -244,16 +296,21 @@ def write_json_result(
 def configure_runtime(args: argparse.Namespace, device: torch.device) -> None:
     torch.set_float32_matmul_precision(args.matmul_precision)
     if device.type == "cuda":
+        configure_triton_driver_path()
         torch.backends.cuda.matmul.allow_tf32 = args.allow_tf32
         torch.backends.cudnn.allow_tf32 = args.allow_tf32
 
 
-def run_benchmark_case(
+def _run_benchmark_case_with_profile(
     config: TransformerConfig,
     args: argparse.Namespace,
     device: torch.device,
     dtype: torch.dtype,
-) -> Tuple[AccuracySummary, Optional[Dict[str, object]]]:
+) -> Tuple[
+    AccuracySummary,
+    Optional[Dict[str, object]],
+    Optional[Dict[str, object]],
+]:
     config.validate()
 
     torch.manual_seed(args.seed)
@@ -301,7 +358,7 @@ def run_benchmark_case(
             "Use --benchmark-on-failure to benchmark an incorrect "
             "implementation anyway."
         )
-        return accuracy, None
+        return accuracy, None, None
 
     # Accuracy tensors are no longer needed. Release their cached CUDA blocks
     # before allocating the fixed timing input, outside the measured region.
@@ -319,6 +376,35 @@ def run_benchmark_case(
         warmup=args.warmup,
         repeats=args.repeats,
         rounds=args.benchmark_rounds,
+    )
+    candidate_profile = None
+    if getattr(args, "profile_candidate", False) and accuracy.passed:
+        print("\n=== Bounded candidate profile ===")
+        candidate_profile = profile_candidate(
+            optimized=optimized,
+            config=config,
+            device=device,
+            dtype=dtype,
+            seed=args.seed,
+            padding_ratio=args.padding_ratio,
+            input_scale=args.input_scale,
+        )
+        print(
+            f"recorded {len(candidate_profile['events'])} bounded events from "
+            f"{PROFILE_CANDIDATE_REPLAYS} candidate replays"
+        )
+    return accuracy, performance, candidate_profile
+
+
+def run_benchmark_case(
+    config: TransformerConfig,
+    args: argparse.Namespace,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> Tuple[AccuracySummary, Optional[Dict[str, object]]]:
+    """Run one case while preserving the facade's historical two-value return."""
+    accuracy, performance, _candidate_profile = _run_benchmark_case_with_profile(
+        config, args, device, dtype
     )
     return accuracy, performance
 
@@ -340,8 +426,9 @@ def official_case_result(
     config: TransformerConfig,
     accuracy: AccuracySummary,
     performance: Optional[Dict[str, object]],
+    candidate_profile: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
-    return {
+    result: Dict[str, object] = {
         "case_id": case_id,
         "config": asdict(config),
         "status": "succeeded" if accuracy.passed else "correctness_failed",
@@ -350,6 +437,9 @@ def official_case_result(
         "accuracy": asdict(accuracy),
         "performance": performance,
     }
+    if candidate_profile is not None:
+        result["candidate_profile"] = candidate_profile
+    return result
 
 
 def execution_failed_result(
@@ -428,8 +518,12 @@ def run_official_matrix(
             f"({position}/{len(requested_case_ids)}) ########"
         )
         try:
-            accuracy, performance = run_benchmark_case(config, args, device, dtype)
-            result = official_case_result(case_id, config, accuracy, performance)
+            accuracy, performance, candidate_profile = _run_benchmark_case_with_profile(
+                config, args, device, dtype
+            )
+            result = official_case_result(
+                case_id, config, accuracy, performance, candidate_profile
+            )
         except RuntimeError as error:
             if not is_out_of_memory_error(error):
                 raise
